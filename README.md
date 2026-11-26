@@ -42,7 +42,16 @@ node dist/server.js
 # [Bridge] listening on ws://0.0.0.0:8787/ws (root=/Users/you/projects)
 ```
 
-验证：`npm test`（26 个用例，含伪 pi 端到端）、`npm run smoke`（真 pi，需已构建）。
+验证：`npm test`（28 个用例，含伪 pi 端到端）、`npm run smoke`（真 pi，需已构建且 pi 已登录）。
+
+`pi` 必须在 `PATH` 里。若你的 pi 装在别处，用 `PI_CLI=/abs/path/to/pi` 指定。
+`BRIDGE_TOKEN` 也接受 `bridge/.env` 文件：
+
+```bash
+cp .env.example .env      # 填 BRIDGE_TOKEN 与 PI_ALLOWED_ROOT
+set -a; . ./.env; set +a
+node dist/server.js
+```
 
 ### 2. Android
 
@@ -53,7 +62,15 @@ JAVA_HOME="/Applications/Android Studio.app/Contents/jbr/Contents/Home" \
 ./gradlew :app:installDebug
 ```
 
-打开 App → 填 `home-pc:8787` 与 Token → 保存。右上角 ⇄ 新建/切换工作区会话。
+打开 App → 填 Bridge 地址与 Token → 保存。右上角 ⇄ 新建/切换工作区会话。
+
+地址填法（只填 `host:port`，协议前缀会自动补）：
+
+| 场景 | 填什么 |
+| --- | --- |
+| 手机在同一个 tailnet 里 | `home-pc:8787`（MagicDNS 主机名）或 `100.x.y.z:8787` |
+| 用 Android **模拟器** 连本机 | `10.0.2.2:8787`（模拟器里访问宿主机 loopback 的特例地址） |
+| 想用浏览器排查（不用装 App） | 打开 `http://127.0.0.1:8787/?token=<你的token>` |
 
 ### 3. 生产部署（Linux/NAS）
 

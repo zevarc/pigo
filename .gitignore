@@ -1,7 +1,10 @@
 # Node
 node_modules/
 dist/
-data/
+# Bridge bookkeeping only — a bare `data/` would also swallow the Kotlin
+# package at android/app/src/main/java/com/zevarc/pigo/data/.
+bridge/data/
+bridge/dist/
 *.log
 
 # Android / Gradle
