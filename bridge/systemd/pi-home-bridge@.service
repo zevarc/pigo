@@ -1,0 +1,32 @@
+[Unit]
+Description=Pi Home Bridge (pi --mode rpc session gateway)
+Documentation=https://github.com/earendil-works/pi
+After=network-online.target tailscaled.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=%i
+WorkingDirectory=%h/pi-home-bridge
+EnvironmentFile=%h/.config/pi-home-bridge.env
+ExecStart=/usr/bin/env node %h/pi-home-bridge/dist/server.js
+Restart=always
+RestartSec=3
+# pi needs a moment to dispose its runtime on SIGTERM.
+KillSignal=SIGTERM
+TimeoutStopSec=30
+KillMode=mixed
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=pi-home-bridge
+
+# The bridge writes sessions.json and pi session files under BRIDGE_DATA_DIR.
+StateDirectory=pi-home-bridge
+ReadWritePaths=%h/pi-home-bridge/data %h/pi-home-bridge
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=read-only
+
+[Install]
+WantedBy=default.target

@@ -1,0 +1,267 @@
+<!doctype html>
+<html lang="zh-CN">
+	<head>
+		<meta charset="utf-8" />
+		<meta name="viewport" content="width=device-width, initial-scale=1" />
+		<title>Pi Home Bridge · 调测台</title>
+		<style>
+			:root {
+				color-scheme: dark light;
+				--bg: #0e1116;
+				--panel: #161b22;
+				--border: #2b323c;
+				--text: #e6edf3;
+				--muted: #8b949e;
+				--accent: #4c8dff;
+				--ok: #3fb950;
+				--bad: #f85149;
+			}
+			* { box-sizing: border-box; }
+			body {
+				margin: 0;
+				font: 13px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace;
+				background: var(--bg);
+				color: var(--text);
+				height: 100vh;
+				display: grid;
+				grid-template-rows: auto 1fr auto;
+			}
+			header {
+				display: flex;
+				gap: 12px;
+				align-items: center;
+				padding: 8px 12px;
+				border-bottom: 1px solid var(--border);
+				flex-wrap: wrap;
+			}
+			header strong { color: var(--accent); }
+			.badge { padding: 1px 8px; border-radius: 10px; border: 1px solid var(--border); }
+			.badge.ok { color: var(--ok); border-color: var(--ok); }
+			.badge.bad { color: var(--bad); border-color: var(--bad); }
+			#log { overflow: auto; padding: 12px; display: flex; flex-direction: column; gap: 6px; }
+			.turn { border-left: 2px solid var(--border); padding-left: 10px; }
+			.turn.user { border-color: var(--accent); }
+			.turn.assistant { border-color: var(--ok); }
+			.tool {
+				border: 1px solid var(--border);
+				border-radius: 6px;
+				padding: 4px 8px;
+				background: var(--panel);
+				cursor: pointer;
+				white-space: pre-wrap;
+				max-height: 22px;
+				overflow: hidden;
+			}
+			.tool.open { max-height: 40vh; overflow: auto; }
+			.tool .name { color: var(--muted); }
+			.tool[data-status="error"] .name { color: var(--bad); }
+			.notice { color: var(--muted); font-size: 12px; }
+			form { display: flex; gap: 8px; padding: 10px 12px; border-top: 1px solid var(--border); }
+			textarea { flex: 1; resize: vertical; min-height: 44px; background: var(--panel); color: var(--text); border: 1px solid var(--border); border-radius: 6px; padding: 8px; font: inherit; }
+			button { background: var(--accent); color: #fff; border: 0; border-radius: 6px; padding: 8px 14px; font: inherit; cursor: pointer; }
+			button.danger { background: var(--bad); }
+			button[hidden] { display: none; }
+		</style>
+	</head>
+	<body>
+		<header>
+			<strong>pi home bridge</strong>
+			<span id="conn" class="badge bad">disconnected</span>
+			<span id="session" class="badge">no session</span>
+			<span id="seq" class="badge">seq 0</span>
+		</header>
+		<main id="log"></main>
+		<form id="composer">
+			<textarea id="input" placeholder="输入指令，Cmd/Ctrl + Enter 发送"></textarea>
+			<button id="send" type="submit">发送</button>
+			<button id="abort" class="danger" type="button" hidden>停止</button>
+		</form>
+
+		<script type="module">
+			const params = new URLSearchParams(location.search);
+			const token = params.get("token") ?? localStorage.getItem("bridgeToken") ?? "";
+			const host = params.get("host") ?? location.host;
+			if (token) localStorage.setItem("bridgeToken", token);
+
+			const log = document.getElementById("log");
+			const conn = document.getElementById("conn");
+			const sessionBadge = document.getElementById("session");
+			const seqBadge = document.getElementById("seq");
+			const input = document.getElementById("input");
+			const sendButton = document.getElementById("send");
+			const abortButton = document.getElementById("abort");
+
+			let socket = null;
+			let sessionId = null;
+			let lastSeq = 0;
+			let attempt = 0;
+			let running = false;
+			let currentTurn = null;
+			const tools = new Map();
+
+			const url = `${location.protocol === "https:" ? "wss" : "ws"}://${host}/ws?token=${encodeURIComponent(token)}`;
+
+			function setStatus(text, ok) {
+				conn.textContent = text;
+				conn.className = `badge ${ok ? "ok" : "bad"}`;
+			}
+
+			function appendTurn(role, text) {
+				const element = document.createElement("div");
+				element.className = `turn ${role}`;
+				element.textContent = text;
+				log.append(element);
+				currentTurn = role === "assistant" ? element : null;
+				log.scrollTop = log.scrollHeight;
+				return element;
+			}
+
+			function appendNotice(text) {
+				const element = document.createElement("div");
+				element.className = "notice";
+				element.textContent = text;
+				log.append(element);
+			}
+
+			function toolElement(event) {
+				const existing = tools.get(event.toolCallId);
+				if (existing) return existing;
+				const element = document.createElement("div");
+				element.className = "tool";
+				element.dataset.status = "running";
+				element.innerHTML = `<span class="name">▶ ${event.name}</span> ${event.summary ?? ""}\n<pre></pre>`;
+				element.addEventListener("click", () => element.classList.toggle("open"));
+				log.append(element);
+				tools.set(event.toolCallId, element);
+				return element;
+			}
+
+			function handle(event) {
+				if (typeof event.seq === "number") {
+					if (event.seq <= lastSeq) return;
+					lastSeq = event.seq;
+					seqBadge.textContent = `seq ${lastSeq}`;
+				}
+				switch (event.type) {
+					case "session_created":
+						sessionId = event.session.id;
+						sessionBadge.textContent = `${event.session.title} (${event.session.id})`;
+						break;
+					case "agent_start":
+						running = true;
+						sendButton.hidden = true;
+						abortButton.hidden = false;
+						appendNotice("— run started —");
+						break;
+					case "agent_settled":
+						running = false;
+						sendButton.hidden = false;
+						abortButton.hidden = true;
+						appendNotice(event.aborted ? "— aborted —" : "— settled —");
+						break;
+					case "message_delta":
+						if (!currentTurn) currentTurn = appendTurn("assistant", "");
+						currentTurn.textContent += event.delta ?? "";
+						log.scrollTop = log.scrollHeight;
+						break;
+					case "assistant_message_end":
+						if (!currentTurn && event.text) currentTurn = appendTurn("assistant", event.text);
+						else if (currentTurn && event.text) currentTurn.textContent = event.text;
+						currentTurn = null;
+						break;
+					case "tool_start":
+					case "tool_card":
+						toolElement(event);
+						break;
+					case "tool_progress":
+					case "tool_end": {
+						const element = tools.get(event.toolCallId) ?? toolElement(event);
+						element.querySelector("pre").textContent = event.output ?? "";
+						if (event.type === "tool_end") element.dataset.status = event.isError ? "error" : "ok";
+						break;
+					}
+					case "session_process_exit":
+						appendNotice(`— pi exited (code=${event.code}, signal=${event.signal}) —`);
+						running = false;
+						sendButton.hidden = false;
+						abortButton.hidden = true;
+						break;
+					case "error":
+						appendNotice(`error: ${event.message}`);
+						break;
+					case "notice":
+						appendNotice(`${event.kind}${event.disposition ? `: ${event.disposition}` : ""}`);
+						break;
+				}
+			}
+
+			function sync() {
+				if (sessionId) socket.send(JSON.stringify({ type: "sync", sessionId, lastSeq }));
+			}
+
+			function connect() {
+				setStatus("connecting…", false);
+				socket = new WebSocket(url);
+				socket.onopen = () => {
+					attempt = 0;
+					setStatus("connected", true);
+					socket.send(JSON.stringify({ type: "list_sessions" }));
+				};
+				socket.onmessage = (message) => {
+					const event = JSON.parse(message.data);
+					if (event.type === "sessions_snapshot") {
+						const first = event.sessions[0];
+						if (!sessionId && first) {
+							sessionId = first.id;
+							sessionBadge.textContent = `${first.title} (${first.id})`;
+							sync();
+						}
+						if (!first) {
+							socket.send(JSON.stringify({ type: "create_session", cwd: ".", title: "playground" }));
+						}
+						return;
+					}
+					if (event.type === "sync_response") {
+						sessionId = event.sessionId;
+						running = event.isAgentRunning;
+						sendButton.hidden = running;
+						abortButton.hidden = !running;
+						event.events.forEach(handle);
+						return;
+					}
+					handle(event);
+				};
+				socket.onclose = () => {
+					setStatus("disconnected", false);
+					const delay = Math.min(30_000, 1000 * 2 ** attempt++);
+					setTimeout(connect, delay);
+				};
+			}
+
+			document.getElementById("composer").addEventListener("submit", (event) => {
+				event.preventDefault();
+				const text = input.value.trim();
+				if (!text || !sessionId || !socket) return;
+				appendTurn("user", text);
+				socket.send(JSON.stringify({ type: "prompt", sessionId, message: text, id: `m-${Date.now()}` }));
+				input.value = "";
+			});
+
+			input.addEventListener("keydown", (event) => {
+				if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) {
+					document.getElementById("composer").requestSubmit();
+				}
+			});
+
+			abortButton.addEventListener("click", () => {
+				if (sessionId) socket.send(JSON.stringify({ type: "abort", sessionId }));
+			});
+
+			if (!token) {
+				setStatus("missing token: add ?token=…", false);
+			} else {
+				connect();
+			}
+		</script>
+	</body>
+</html>

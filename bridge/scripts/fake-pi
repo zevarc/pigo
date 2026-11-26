@@ -1,0 +1,3 @@
+#!/bin/sh
+# Test double for `pi --mode rpc`: ignores CLI flags, speaks the RPC protocol.
+exec node "$(dirname "$0")/fake-pi.mjs" "$@"

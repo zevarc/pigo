@@ -1,0 +1,45 @@
+# android/AGENTS.md
+
+Android 客户端：把 Bridge 的事件流渲染成可操作的对话界面。
+
+## 验证命令
+
+必须显式给两个环境变量（`local.properties` 不可依赖）：
+
+```bash
+ANDROID_HOME=$HOME/Library/Android/sdk \
+JAVA_HOME="/Applications/Android Studio.app/Contents/jbr/Contents/Home" \
+./gradlew :app:testDebugUnitTest    # 15 个 reducer 用例
+```
+
+装到模拟器：`./gradlew :app:installDebug`。
+
+仓库没有 lint/ktlint，单测是唯一自动化门禁。改动 `TranscriptReducer` 后必须跑。
+
+## 分层
+
+```
+MainActivity      两个屏幕的切换，无导航库
+  ui/PiScreen      顶部状态 / 会话抽屉 / 对话流 / 发送-停止按钮
+  ui/SessionSheet  会话列表 + 从工作区白名单新建
+  ui/components/ToolCard  折叠工具卡片
+    ui/PiViewModel   意图 → 上行帧；事件 → reduce
+      bridge/TranscriptReducer   纯函数，(state, event) → state
+        bridge/Wire              JsonElement 便捷访问
+      bridge/BridgeSocketClient  OkHttp WS + 指数退避
+  data/BridgeSettings  SharedPreferences（地址 + Token）
+```
+
+## 硬规则
+
+- **`TranscriptReducer` 不许依赖 Android**，否则无法 JVM 单测。所有平台调用挤到边缘。
+- **`seq` 是去重游标**：切会话必须 `resetCursor()`，否则新会话的低 seq 事件会被当重复丢掉。
+- **不要用 `agent_end` 判定空闲**，只认 `agent_settled`。
+- 文本渲染以 `assistant_message_end` 的全文为准，`message_delta` 只是增量预览（重连后可能有缺口）。
+- 底部 sheet 用 `Column + verticalScroll`，不要用 `LazyColumn`：sheet 以无界高度测量，
+  LazyColumn 会塌成 0 高（踩过一次）。
+
+## 与 Bridge 的契约
+
+见仓库根 `README.md` 的事件表。Bridge 侧对应实现是 `bridge/src/normalize.ts`，
+两边的单测互为镜像——改一边就要改另一边。

@@ -1,0 +1,27 @@
+{
+  "name": "pi-home-bridge",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Home bridge that exposes pi --mode rpc sessions to mobile clients over Tailscale",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "start": "node dist/server.js",
+    "dev": "tsx watch src/server.ts",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "node --import tsx --test test/*.test.ts",
+    "smoke": "node --import tsx scripts/smoke.ts"
+  },
+  "dependencies": {
+    "ws": "8.18.2"
+  },
+  "devDependencies": {
+    "@types/node": "26.6.11",
+    "@types/ws": "8.18.2",
+    "tsx": "4.23.15",
+    "typescript": "5.9.3"
+  }
+}
