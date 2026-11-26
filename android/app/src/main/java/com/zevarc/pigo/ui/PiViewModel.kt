@@ -150,6 +150,29 @@ class PiViewModel(application: Application) : AndroidViewModel(application) {
         send(payload.toString())
     }
 
+    /** Lists pi's own session store for the resume picker. */
+    fun loadResumeEntries(query: String = "") {
+        _state.update { it.copy(resumeQuery = query) }
+        send(
+            Wire.obj(
+                "type" to JsonPrimitive("list_pi_sessions"),
+                "query" to JsonPrimitive(query),
+                "limit" to JsonPrimitive(50),
+            ).toString(),
+        )
+    }
+
+    /** Opens an existing pi session by id; the bridge spawns it in its own cwd. */
+    fun resumeSession(sessionId: String) {
+        reducer.resetCursor()
+        send(
+            Wire.obj(
+                "type" to JsonPrimitive("resume_session"),
+                "sessionId" to JsonPrimitive(sessionId),
+            ).toString(),
+        )
+    }
+
     fun loadCommands() {
         val sessionId = _state.value.activeSessionId ?: return
         send(

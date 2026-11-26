@@ -33,6 +33,10 @@ const BRIDGE_TOKEN = process.env.BRIDGE_TOKEN ?? "";
 const ALLOWED_ROOT = path.resolve(process.env.PI_ALLOWED_ROOT ?? process.cwd());
 const DATA_DIR = path.resolve(process.env.BRIDGE_DATA_DIR ?? "./data");
 const SESSION_DIR = path.resolve(process.env.PI_SESSION_DIR ?? path.join(DATA_DIR, "pi-sessions"));
+// pi's own store. This is what /resume lists, so it must be the real one.
+const SERVICES_ROOT = path.resolve(
+	process.env.PI_SESSIONS_ROOT ?? path.join(process.env.PI_AGENT_DIR ?? path.join(process.env.HOME ?? "~", ".pi", "agent"), "sessions")
+);
 
 if (!BRIDGE_TOKEN) {
 	logger.error("[Bridge] BRIDGE_TOKEN is not set; refusing to start with an open socket");
@@ -48,6 +52,12 @@ const bridge = new MultiSessionPiBridge({
 	allowedRoot: ALLOWED_ROOT,
 	dataDir: DATA_DIR,
 	sessionDir: SESSION_DIR,
+	piSessionsRoot: SERVICES_ROOT,
+	extraWorkspaces: (process.env.PI_EXTRA_WORKSPACES ?? process.env.PI_ALLOWED_ROOT ?? "")
+		.split(",")
+		.map((entry) => entry.trim())
+		.filter(Boolean)
+		.map((entry) => path.resolve(entry)),
 	idleTimeoutMs: envInt("IDLE_TIMEOUT_MS", 20 * 60 * 1000),
 	historyLimit: envInt("BRIDGE_HISTORY_LIMIT", 500),
 	shutdownGraceMs: envInt("SHUTDOWN_GRACE_MS", 3000),
@@ -130,6 +140,23 @@ async function handleClientMessage(ws: WebSocket, raw: string) {
 					workspaces: bridge.listWorkspaces()
 				});
 				return;
+
+			case "list_pi_sessions": {
+				send(ws, {
+					type: "pi_sessions_snapshot",
+					sessions: bridge.listPiSessions(
+						typeof msg.query === "string" ? msg.query : undefined,
+						typeof msg.limit === "number" ? msg.limit : 50
+					)
+				});
+				return;
+			}
+
+			case "resume_session": {
+				const meta = bridge.resumePiSession(sessionId);
+				send(ws, { type: "session_created", session: meta });
+				return;
+			}
 
 			case "create_session": {
 				const meta = bridge.createSession(msg.cwd, msg.title);

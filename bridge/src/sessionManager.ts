@@ -1,8 +1,9 @@
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
 import { JsonlFramer } from "./jsonl.js";
+import { listSessionFiles, type SessionFileInfo } from "./sessionIndex.js";
 import { normalizePiEvent, type NormalizeContext } from "./normalize.js";
 import type { BridgeEvent, SessionSummary } from "./protocol.js";
 
@@ -14,6 +15,10 @@ export interface BridgeOptions {
 	allowedRoot: string;
 	dataDir: string;
 	sessionDir: string;
+	/** pi's own session store, the source of truth for `/resume`. */
+	piSessionsRoot: string;
+	/** Extra starting points for new sessions, besides pi's recent cwds. */
+	extraWorkspaces: string[];
 	idleTimeoutMs: number;
 	/** How many events a session keeps for reconnect replay. */
 	historyLimit: number;
@@ -35,6 +40,12 @@ export interface SessionMeta {
 	cwd: string;
 	createdAt: number;
 	lastActiveAt: number;
+	/**
+	 * Absolute path of the pi session file. Bridge-owned sessions get their file
+	 * inside `sessionDir`; resumed ones point at pi's own store so `--session`
+	 * opens the real history instead of a copy.
+	 */
+	sessionFile?: string;
 }
 
 /** Anything that can receive bridge events; WebSocket in production, a stub in tests. */
@@ -74,6 +85,21 @@ interface SessionRuntime {
 }
 
 const MAX_HISTORY_FILES = 200;
+
+/** Directories that are never workspaces and are expensive to walk. */
+const SKIP_DIRS = new Set([
+	"node_modules",
+	"Library",
+	"Applications",
+	"Pictures",
+	"Music",
+	"Movies",
+	"Downloads",
+	".git",
+	"build",
+	"dist",
+	"target"
+]);
 
 function safeId(raw: string): string | null {
 	const trimmed = raw.trim();
@@ -158,30 +184,110 @@ export class MultiSessionPiBridge {
 	}
 
 	/** Directories under the allowed root that a client may use as a workspace. */
-	listWorkspaces(maxDepth = 2): { path: string; name: string }[] {
-		const results: { path: string; name: string }[] = [];
-		const walk = (dir: string, depth: number) => {
-			if (depth > maxDepth) return;
-			let entries: string[];
-			try {
-				entries = readdirSync(dir);
-			} catch {
-				return;
+	/**
+	 * Directories a new session may be created in.
+	 *
+	 * Derived from pi's session store rather than by walking the whole allowed
+	 * root: a home directory contains tens of thousands of entries, and the
+	 * directories a user actually works in are exactly the ones pi remembers.
+	 * Explicitly configured roots are added on top.
+	 */
+	listWorkspaces(maxDepth = 2, maxEntries = 200): { path: string; name: string }[] {
+		const seen = new Map<string, { path: string; name: string }>();
+		for (const row of this.listPiSessions(undefined, 500)) {
+			const relative = path.relative(this.options.allowedRoot, row.cwd);
+			if (relative.startsWith("..") || path.isAbsolute(relative)) continue;
+			if (!seen.has(row.cwd)) {
+				seen.set(row.cwd, { path: relative, name: path.basename(row.cwd) || relative });
 			}
-			for (const entry of entries) {
-				if (entry.startsWith(".") || entry === "node_modules") continue;
-				const full = path.join(dir, entry);
+		}
+		for (const extra of this.options.extraWorkspaces) {
+			const relative = path.relative(this.options.allowedRoot, extra);
+			if (relative.startsWith("..") || path.isAbsolute(relative)) continue;
+			if (!seen.has(extra)) seen.set(extra, { path: relative, name: path.basename(extra) });
+		}
+		if (seen.size > 0) return Array.from(seen.values()).slice(0, maxEntries);
+
+		// Nothing known yet (fresh bridge): fall back to a shallow, capped walk.
+		const root = this.options.allowedRoot;
+		const results: { path: string; name: string }[] = [];
+		let frontier = [root];
+
+		for (let depth = 1; depth <= maxDepth && frontier.length > 0 && results.length < maxEntries; depth++) {
+			const next: string[] = [];
+			for (const dir of frontier) {
+				let entries: string[];
 				try {
-					if (!statSync(full).isDirectory()) continue;
+					entries = readdirSync(dir);
 				} catch {
 					continue;
 				}
-				results.push({ path: path.relative(this.options.allowedRoot, full), name: entry });
-				walk(full, depth + 1);
+				for (const entry of entries) {
+					if (results.length >= maxEntries) break;
+					if (entry.startsWith(".") || SKIP_DIRS.has(entry)) continue;
+					const full = path.join(dir, entry);
+					let stats;
+					try {
+						stats = lstatSync(full);
+					} catch {
+						continue;
+					}
+					if (!stats.isDirectory()) continue;
+					results.push({ path: path.relative(root, full), name: entry });
+					next.push(full);
+				}
 			}
+			frontier = next;
+		}
+		return results;
+	}
+
+	/** pi sessions on disk, newest first. Read from headers only. */
+	listPiSessions(query?: string, limit = 50): SessionFileInfo[] {
+		const rows = listSessionFiles({
+			root: this.options.piSessionsRoot,
+			scanBytes: 64 * 1024,
+			limit: Math.max(limit, 200)
+		});
+		const needle = query?.trim().toLowerCase();
+		const filtered = needle
+			? rows.filter(
+					(row) =>
+						row.id.toLowerCase().includes(needle) ||
+						row.cwd.toLowerCase().includes(needle) ||
+						(row.name ?? "").toLowerCase().includes(needle) ||
+						(row.preview ?? "").toLowerCase().includes(needle)
+				)
+			: rows;
+		return filtered.slice(0, limit);
+	}
+
+	/**
+	 * Registers an existing pi session so the client can talk to it.
+	 *
+	 * `cwd` must come from the session header (pi pins a session to the directory
+	 * it was created in) and still passes the whitelist check.
+	 */
+	resumePiSession(sessionId: string): SessionMeta {
+		const existing = this.sessions.get(sessionId);
+		if (existing) return existing.meta;
+
+		const match = this.listPiSessions(undefined, 500).find((row) => row.id === sessionId);
+		if (!match) throw new Error(`Unknown pi session: ${sessionId}`);
+
+		const cwd = this.resolveSafeCwd(match.cwd);
+		const meta: SessionMeta = {
+			id: sessionId,
+			title: match.name?.trim() || path.basename(cwd),
+			cwd,
+			createdAt: match.createdAt,
+			lastActiveAt: Date.now(),
+			sessionFile: match.path
 		};
-		walk(this.options.allowedRoot, 1);
-		return results.slice(0, MAX_HISTORY_FILES);
+		this.sessions.set(sessionId, this.newRuntime(meta));
+		this.saveSessions();
+		this.broadcast({ type: "sessions_updated", sessions: this.getSessionSummaries() });
+		return meta;
 	}
 
 	// ------------------------------------------------------------------ lifecycle
@@ -244,7 +350,12 @@ export class MultiSessionPiBridge {
 		const args = ["--mode", "rpc", ...this.options.cliArgs];
 		// Persist and resume the conversation across process evictions.
 		if (!args.includes("--no-session")) {
-			args.push("--session-id", runtime.meta.id, "--session-dir", this.options.sessionDir);
+			if (runtime.meta.sessionFile) {
+				// Resume: open pi's own session file, in the cwd it recorded.
+				args.push("--session", runtime.meta.sessionFile);
+			} else {
+				args.push("--session-id", runtime.meta.id, "--session-dir", this.options.sessionDir);
+			}
 		}
 
 		const proc = spawn(this.options.cliPath, args, {

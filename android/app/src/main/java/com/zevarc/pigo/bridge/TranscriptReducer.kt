@@ -4,6 +4,7 @@ import com.zevarc.pigo.model.ChatTurn
 import com.zevarc.pigo.model.CommandInfo
 import com.zevarc.pigo.model.UiRequest
 import com.zevarc.pigo.model.PiUiState
+import com.zevarc.pigo.model.ResumeEntry
 import com.zevarc.pigo.model.SessionSummary
 import com.zevarc.pigo.model.ToolCallItem
 import com.zevarc.pigo.model.ToolStatus
@@ -73,6 +74,7 @@ class TranscriptReducer {
             "tool_end" -> applyToolEnd(state, event)
             "ui_request" -> applyUiRequest(state, event)
             "commands_snapshot" -> applyCommands(state, event)
+            "pi_sessions_snapshot" -> applyResumeEntries(state, event)
             "status" -> applyStatus(state, event)
             "widget" -> applyWidget(state, event)
             "editor_text" -> state.copy(inputText = event.string("text").orEmpty())
@@ -310,6 +312,22 @@ class TranscriptReducer {
             CommandInfo(name, obj.string("description"), obj.string("source"))
         }
         return state.copy(commands = commands)
+    }
+
+    private fun applyResumeEntries(state: PiUiState, event: JsonObject): PiUiState {
+        val entries = event.array("sessions").orEmpty().mapNotNull { element ->
+            val obj = element as? JsonObject ?: return@mapNotNull null
+            val id = obj.string("id") ?: return@mapNotNull null
+            ResumeEntry(
+                id = id,
+                cwd = obj.string("cwd").orEmpty(),
+                name = obj.string("name"),
+                preview = obj.string("preview"),
+                updatedAt = obj.long("updatedAt") ?: 0L,
+                sizeBytes = obj.long("sizeBytes") ?: 0L,
+            )
+        }
+        return state.copy(resumeEntries = entries)
     }
 
     private fun applyStatus(state: PiUiState, event: JsonObject): PiUiState {

@@ -37,6 +37,17 @@ server.ts         HTTP/WS 入口、Bearer/Query 鉴权、消息路由
   `ui_request` 并登记在 `runtime.uiRequests`，客户端回 `ui_response` 才解开；客户端
   全断开时必须 `cancelPendingUi`，否则 pi 卡在等回答上，会话永远不 settle。
 
+## 关于 resume
+
+- 列表数据源是 pi 的 `~/.pi/agent/sessions`，**不要**改成 Bridge 私有目录，否则手机端
+  看不到用户真实的会话。
+- 会话文件巨大（最大 54 MB），只能读头部：`sessionIndex.ts` 用 `readSync` 取前 N KB，
+  且保证第一个 header 行完整。
+- 目录名 `--Users-me-Labs-pigo--` 是把 `/`、`:`、`\\` 都压成 `-` 的结果，**不可逆**，
+  权威 `cwd` 一律取文件 header 里的字段。
+- 恢复时用 `--session <file>`，不要用 `--session-id`：后者会在 bridge 自己的目录里另建
+  一个空会话。
+
 ## 排查顺序
 
 1. `curl localhost:8787/health`

@@ -28,6 +28,9 @@ export interface ClientMessage {
   id?: string;
   streamingBehavior?: string;
   clearQueue?: boolean;
+  /** `/resume` picker. */
+  query?: string;
+  limit?: number;
   /** Extension UI dialog reply. */
   requestId?: string;
   value?: string;

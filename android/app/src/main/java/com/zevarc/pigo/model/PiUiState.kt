@@ -34,6 +34,8 @@ data class PiUiState(
     val notices: List<String> = emptyList(),
     val uiRequest: UiRequest? = null,
     val commands: List<CommandInfo> = emptyList(),
+    val resumeEntries: List<ResumeEntry> = emptyList(),
+    val resumeQuery: String = "",
     /** Status lines pushed by extensions (footer equivalent). */
     val extensionStatus: Map<String, String> = emptyMap(),
     /** Widget text blocks pushed by extensions. */
@@ -51,6 +53,16 @@ data class SessionSummary(
     val isAgentRunning: Boolean = false,
     val processAlive: Boolean = false,
     val latestSeq: Long = 0L,
+)
+
+/** One row of the `/resume` picker: an existing pi session on disk. */
+data class ResumeEntry(
+    val id: String,
+    val cwd: String,
+    val name: String?,
+    val preview: String?,
+    val updatedAt: Long,
+    val sizeBytes: Long,
 )
 
 /** A directory under the bridge's allowed root that can host a new session. */

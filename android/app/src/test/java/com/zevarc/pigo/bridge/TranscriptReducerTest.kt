@@ -273,6 +273,23 @@ class TranscriptReducerTest {
     }
 
     @Test
+    fun `resume list carries everything a picker row needs`() {
+        val state = reduce(
+            """{"type":"pi_sessions_snapshot","sessions":[
+                 {"id":"01a215bb","cwd":"/Users/me/Labs/pigo","name":null,"preview":"fix the flaky test","updatedAt":1733234401000,"sizeBytes":5033164},
+                 {"id":"01a20692","cwd":"/Users/me/StudioProjects/ZevBond","name":"zevbond","preview":"/init","updatedAt":1733234402000,"sizeBytes":1024}
+               ]}""",
+        )
+        assertEquals(2, state.resumeEntries.size)
+        val first = state.resumeEntries.first()
+        assertEquals("01a215bb", first.id)
+        assertEquals("/Users/me/Labs/pigo", first.cwd)
+        assertEquals("fix the flaky test", first.preview)
+        assertNull(first.name)
+        assertEquals("zevbond", state.resumeEntries.last().name)
+    }
+
+    @Test
     fun `unknown event types are ignored`() {
         val state = reduce("""{"type":"brand_new_thing","sessionId":"s1","seq":1}""")
         assertNull(state.errorBanner)

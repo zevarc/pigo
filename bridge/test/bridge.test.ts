@@ -21,6 +21,8 @@ function makeBridge(overrides: Partial<Parameters<typeof MultiSessionPiBridge>[0
 		allowedRoot: root,
 		dataDir: data,
 		sessionDir: path.join(data, "sessions"),
+		piSessionsRoot: path.join(data, "pi-sessions"),
+		extraWorkspaces: [],
 		idleTimeoutMs: 0,
 		historyLimit: 500,
 		shutdownGraceMs: 1000,

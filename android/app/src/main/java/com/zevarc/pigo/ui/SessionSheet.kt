@@ -14,6 +14,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material3.Badge
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -51,10 +52,14 @@ fun SessionSheet(
     onCreate: (String, String?) -> Unit,
     onDelete: (String) -> Unit,
     onRefresh: () -> Unit,
+    onSearch: (String) -> Unit,
+    onResume: (String) -> Unit,
 ) {
     var cwd by remember { mutableStateOf("") }
     var title by remember { mutableStateOf("") }
     var expandedNew by remember { mutableStateOf(false) }
+    var expandedResume by remember { mutableStateOf(false) }
+    var query by remember { mutableStateOf("") }
 
     // Plain Column + scroll: a bottom sheet measures its content with an
     // unbounded height, so a LazyColumn would collapse to zero.
@@ -71,8 +76,18 @@ fun SessionSheet(
         ) {
             Text("会话", style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
             IconButton(onClick = onRefresh) { Icon(Icons.Filled.Refresh, contentDescription = "刷新") }
-            IconButton(onClick = { expandedNew = !expandedNew }) {
+            IconButton(onClick = {
+                expandedNew = !expandedNew
+                expandedResume = false
+            }) {
                 Icon(Icons.Filled.Add, contentDescription = "新建会话")
+            }
+            IconButton(onClick = {
+                expandedResume = !expandedResume
+                expandedNew = false
+                if (expandedResume && state.resumeEntries.isEmpty()) onSearch("")
+            }) {
+                Icon(Icons.Filled.History, contentDescription = "恢复历史会话")
             }
         }
 
@@ -123,6 +138,50 @@ fun SessionSheet(
                             expandedNew = false
                         },
                     ) { Text("创建并切入") }
+                }
+                HorizontalDivider()
+            }
+        }
+
+        if (expandedResume) {
+            Column(modifier = Modifier.padding(horizontal = 16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedTextField(
+                    value = query,
+                    onValueChange = {
+                        query = it
+                        onSearch(it)
+                    },
+                    label = { Text("搜索历史会话（id / 目录 / 内容）") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                if (state.resumeEntries.isEmpty()) {
+                    Text(
+                        text = "没有匹配的历史会话",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                state.resumeEntries.forEach { entry ->
+                    ListItem(
+                        headlineContent = {
+                            Text(
+                                text = entry.name ?: entry.cwd.substringAfterLast('/').ifBlank { entry.id.take(8) },
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                        },
+                        supportingContent = {
+                            Text(
+                                text = entry.cwd + "\n" + (entry.preview ?: entry.id),
+                                style = MaterialTheme.typography.bodySmall,
+                                maxLines = 2,
+                                overflow = TextOverflow.Ellipsis,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        },
+                        modifier = Modifier.clickable { onResume(entry.id) },
+                    )
                 }
                 HorizontalDivider()
             }

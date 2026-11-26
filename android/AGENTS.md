@@ -47,6 +47,11 @@ MainActivity      两个屏幕的切换，无导航库
   `cancelled: true`，否则 pi 侧阻塞。`/` 开头时显示 `CommandPalette`（数据来自
   `get_commands`）。
 
+- **Markdown 对齐 pi 的语义**，不是库默认主题：标题与正文同字号、靠颜色区分；
+  行内代码用正文字体加 tinted chip；只有代码块用等宽；引用斜体带左rule。
+  参照 `pi/dist/modes/interactive/theme/system-theme.js` 与
+  `pi/dist/core/export-html/template.css`。
+
 ## 与 Bridge 的契约
 
 见仓库根 `README.md` 的事件表。Bridge 侧对应实现是 `bridge/src/normalize.ts`，

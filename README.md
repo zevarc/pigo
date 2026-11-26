@@ -87,6 +87,7 @@ sudo systemctl enable --now pi-home-bridge@$USER
 上行（手机 → Bridge）：`list_sessions` `list_workspaces` `create_session` `delete_session`
 `sync(sessionId,lastSeq)` `prompt(sessionId,message,id)` `abort(sessionId)` `get_messages`
 `get_commands` `ui_response(requestId,value|confirmed|cancelled)`
+`list_pi_sessions(query,limit)` `resume_session(sessionId)`
 
 斜杠命令走的是 `prompt`（pi 把 `/model`、`/compact`、`/skill:xxx` 当普通输入展开），
 扩展需要的交互经 `ui_request` / `ui_response` 往返。客户端断开时 Bridge 会把挂起的
@@ -109,10 +110,26 @@ sync_response/workspaces_snapshot/messages_snapshot/error` 等控制消息外，
 | `ui_request` | **扩展对话框**（select/confirm/input/editor），pi 正阻塞等客户端回答 |
 | `status` / `widget` / `editor_text` | 扩展推来的状态行、文本块、输入框预填 |
 | `commands_snapshot` | `/` 命令列表（扩展命令、prompt 模板、skill）|
+| `pi_sessions_snapshot` | `/resume` 列表：pi 自己磁盘上的历史会话 |
 
 重连时客户端发 `sync(sessionId, lastSeq)`，Bridge 回放 `seq > lastSeq` 的事件；
 若游标已滑出 500 条环形缓冲，`sync_response.needsHistoryReload=true`，客户端改用
 `get_messages` 重建整段对话。
+
+## 恢复历史会话（/resume）
+
+客户端列出的是 **pi 自己** 的会话库，不是 Bridge 的私有记录：
+
+```
+~/.pi/agent/sessions/--<cwd 编码>--/<timestamp>_<session-id>.jsonl
+```
+
+会话数据可以有几百 MB（我们这台 73 个会话 / 559 MB，单个最大 54 MB），所以列表只
+读取每个文件的前 64 KB：从中取 header 的 `cwd`、`/name` 和第一条用户消息做预览。
+点开某个会话时 Bridge 用 `pi --session <file>` 在原工作区拉起进程，历史原样接续。
+
+工作区白名单仍生效：session header 里的 `cwd` 必须落在 `PI_ALLOWED_ROOT` 内。
+新建会话的工作区候选项也来自这个会话库（用户真正工作过的目录），而不是遍历家目录。
 
 ## 相对设计文档的修正
 
