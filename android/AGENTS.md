@@ -38,6 +38,10 @@ MainActivity      两个屏幕的切换，无导航库
 - 文本渲染以 `assistant_message_end` 的全文为准，`message_delta` 只是增量预览（重连后可能有缺口）。
 - 底部 sheet 用 `Column + verticalScroll`，不要用 `LazyColumn`：sheet 以无界高度测量，
   LazyColumn 会塌成 0 高（踩过一次）。
+- **助手正文必须走 `PiMarkdown`**（`com.mikepenz.markdown.m3.Markdown`），不要再退回纯
+  `Text`：pi 的输出带标题/列表/代码块，原样输出在手机上一团糟。
+- **输入框右侧只用图标按钮**（`FilledIconButton`）。把 `Icon` 塞进 `Button` 会被默认内边距
+  挤成大方块；停止键用 `errorContainer` 容器色，别只把图标染红。
 
 ## 与 Bridge 的契约
 
