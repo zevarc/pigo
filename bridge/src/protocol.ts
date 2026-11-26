@@ -28,6 +28,11 @@ export interface ClientMessage {
   id?: string;
   streamingBehavior?: string;
   clearQueue?: boolean;
+  /** Extension UI dialog reply. */
+  requestId?: string;
+  value?: string;
+  confirmed?: boolean;
+  cancelled?: boolean;
 }
 
 export interface ToolSnapshot {

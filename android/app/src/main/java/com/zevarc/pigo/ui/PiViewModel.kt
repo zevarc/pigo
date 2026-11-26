@@ -19,6 +19,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.buildJsonObject
 import java.util.UUID
 
 /**
@@ -131,6 +132,34 @@ class PiViewModel(application: Application) : AndroidViewModel(application) {
         send(Wire.obj("type" to JsonPrimitive("list_workspaces")).toString())
     }
 
+    /** Answers the pending extension dialog; pi is blocked until this arrives. */
+    fun answerUi(value: String? = null, confirmed: Boolean? = null, cancelled: Boolean = false) {
+        val current = _state.value
+        val request = current.uiRequest ?: return
+        val sessionId = current.activeSessionId ?: return
+        _state.update { it.copy(uiRequest = null) }
+
+        val payload = buildJsonObject {
+            put("type", JsonPrimitive("ui_response"))
+            put("sessionId", JsonPrimitive(sessionId))
+            put("requestId", JsonPrimitive(request.requestId))
+            if (cancelled) put("cancelled", JsonPrimitive(true))
+            if (value != null) put("value", JsonPrimitive(value))
+            if (confirmed != null) put("confirmed", JsonPrimitive(confirmed))
+        }
+        send(payload.toString())
+    }
+
+    fun loadCommands() {
+        val sessionId = _state.value.activeSessionId ?: return
+        send(
+            Wire.obj(
+                "type" to JsonPrimitive("get_commands"),
+                "sessionId" to JsonPrimitive(sessionId),
+            ).toString(),
+        )
+    }
+
     fun toggleTool(toolCallId: String) {
         _state.update { current ->
             current.copy(
@@ -198,6 +227,8 @@ class PiViewModel(application: Application) : AndroidViewModel(application) {
 
     private fun requestMessages(sessionId: String) {
         send(Wire.obj("type" to JsonPrimitive("get_messages"), "sessionId" to JsonPrimitive(sessionId)).toString())
+        // Choose commands are per-session (skills/templates differ by workspace).
+        loadCommands()
     }
 
     private fun send(raw: String) {

@@ -1,6 +1,8 @@
 package com.zevarc.pigo.bridge
 
 import com.zevarc.pigo.model.ChatTurn
+import com.zevarc.pigo.model.CommandInfo
+import com.zevarc.pigo.model.UiRequest
 import com.zevarc.pigo.model.PiUiState
 import com.zevarc.pigo.model.SessionSummary
 import com.zevarc.pigo.model.ToolCallItem
@@ -69,6 +71,12 @@ class TranscriptReducer {
             "tool_card", "tool_start" -> applyToolStart(state, event)
             "tool_progress" -> applyToolProgress(state, event)
             "tool_end" -> applyToolEnd(state, event)
+            "ui_request" -> applyUiRequest(state, event)
+            "commands_snapshot" -> applyCommands(state, event)
+            "status" -> applyStatus(state, event)
+            "widget" -> applyWidget(state, event)
+            "editor_text" -> state.copy(inputText = event.string("text").orEmpty())
+            "session_title" -> state
             "notice" -> applyNotice(state, event)
             "error" -> state.copy(errorBanner = event.string("message") ?: "Bridge error")
             "session_process_exit" -> state.copy(
@@ -280,6 +288,46 @@ class TranscriptReducer {
         }
     }
 
+    private fun applyUiRequest(state: PiUiState, event: JsonObject): PiUiState {
+        val requestId = event.string("requestId") ?: return state
+        return state.copy(
+            uiRequest = UiRequest(
+                requestId = requestId,
+                method = event.string("method").orEmpty(),
+                title = event.string("title"),
+                message = event.string("message"),
+                options = event.array("options").orEmpty().mapNotNull { it.asString() },
+                placeholder = event.string("placeholder"),
+                prefill = event.string("prefill").orEmpty(),
+            ),
+        )
+    }
+
+    private fun applyCommands(state: PiUiState, event: JsonObject): PiUiState {
+        val commands = event.array("commands").orEmpty().mapNotNull { element ->
+            val obj = element as? JsonObject ?: return@mapNotNull null
+            val name = obj.string("name") ?: return@mapNotNull null
+            CommandInfo(name, obj.string("description"), obj.string("source"))
+        }
+        return state.copy(commands = commands)
+    }
+
+    private fun applyStatus(state: PiUiState, event: JsonObject): PiUiState {
+        val key = event.string("statusKey") ?: return state
+        val text = event.string("statusText")
+        val next = state.extensionStatus.toMutableMap()
+        if (text.isNullOrEmpty()) next.remove(key) else next[key] = text
+        return state.copy(extensionStatus = next)
+    }
+
+    private fun applyWidget(state: PiUiState, event: JsonObject): PiUiState {
+        val key = event.string("widgetKey") ?: return state
+        val lines = event.array("widgetLines").orEmpty().mapNotNull { it.asString() }
+        val next = state.widgets.toMutableMap()
+        if (lines.isEmpty()) next.remove(key) else next[key] = lines
+        return state.copy(widgets = next)
+    }
+
     private fun applyNotice(state: PiUiState, event: JsonObject): PiUiState {
         val kind = event.string("kind").orEmpty()
         val text = when (kind) {
@@ -288,6 +336,7 @@ class TranscriptReducer {
             "auto_retry_start" -> "请求失败，第 ${event.long("attempt") ?: 1} 次重试…"
             "auto_retry_end" -> if (event.boolean("success") == true) "重试成功" else "重试失败"
             "extension_error" -> "扩展错误：${event.string("error") ?: ""}"
+            "extension_notify" -> event.string("message")
             "prompt_accepted" -> when (event.string("disposition")) {
                 "queued" -> "已排队，等当前回合结束后执行"
                 "handled" -> "已由扩展处理"

@@ -201,6 +201,78 @@ class TranscriptReducerTest {
     }
 
     @Test
+    fun `an extension dialog becomes a pending ui request`() {
+        val state = reduce(
+            """{"type":"ui_request","sessionId":"s1","requestId":"req-1","method":"select","title":"Pick","options":["a","b"]}""",
+        )
+        val request = state.uiRequest!!
+        assertEquals("req-1", request.requestId)
+        assertEquals("select", request.method)
+        assertEquals(listOf("a", "b"), request.options)
+    }
+
+    @Test
+    fun `input dialog keeps placeholder, editor keeps prefill`() {
+        val input = reduce(
+            """{"type":"ui_request","sessionId":"s1","requestId":"r","method":"input","title":"Password","placeholder":"min 4 chars"}""",
+        ).uiRequest!!
+        assertEquals("min 4 chars", input.placeholder)
+
+        val editor = reduce(
+            """{"type":"ui_request","sessionId":"s1","requestId":"r","method":"editor","title":"Edit","prefill":"draft"}""",
+        ).uiRequest!!
+        assertEquals("draft", editor.prefill)
+    }
+
+    @Test
+    fun `commands snapshot feeds the slash palette`() {
+        val state = reduce(
+            """{"type":"commands_snapshot","sessionId":"s1","commands":[
+                 {"name":"model","description":"Switch model","source":"extension"},
+                 {"name":"skill:drug-tip-card","source":"skill"}
+               ]}""",
+        )
+        assertEquals(listOf("model", "skill:drug-tip-card"), state.commands.map { it.name })
+        assertEquals("Switch model", state.commands.first().description)
+    }
+
+    @Test
+    fun `extension status and widgets are tracked by key`() {
+        val state = reduce(
+            """{"type":"status","sessionId":"s1","statusKey":"ext","statusText":"working"}""",
+            """{"type":"widget","sessionId":"s1","widgetKey":"w","widgetLines":["line1"]}""",
+        )
+        assertEquals("working", state.extensionStatus["ext"])
+        assertEquals(listOf("line1"), state.widgets["w"])
+    }
+
+    @Test
+    fun `clearing a status or widget removes the entry`() {
+        val state = reduce(
+            """{"type":"status","sessionId":"s1","statusKey":"ext","statusText":"working"}""",
+            """{"type":"status","sessionId":"s1","statusKey":"ext"}""",
+            """{"type":"widget","sessionId":"s1","widgetKey":"w","widgetLines":["a"]}""",
+            """{"type":"widget","sessionId":"s1","widgetKey":"w"}""",
+        )
+        assertTrue(state.extensionStatus.isEmpty())
+        assertTrue(state.widgets.isEmpty())
+    }
+
+    @Test
+    fun `extension notify surfaces as a notice`() {
+        val state = reduce(
+            """{"type":"notice","sessionId":"s1","kind":"extension_notify","message":"No stored search results"}""",
+        )
+        assertTrue(state.notices.any { it.contains("No stored search results") })
+    }
+
+    @Test
+    fun `editor_text prefills the composer`() {
+        val state = reduce("""{"type":"editor_text","sessionId":"s1","text":"/model "}""")
+        assertEquals("/model ", state.inputText)
+    }
+
+    @Test
     fun `unknown event types are ignored`() {
         val state = reduce("""{"type":"brand_new_thing","sessionId":"s1","seq":1}""")
         assertNull(state.errorBanner)

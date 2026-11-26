@@ -58,6 +58,8 @@ import com.mikepenz.markdown.m3.markdownTypography
 import com.zevarc.pigo.model.ChatTurn
 import com.zevarc.pigo.model.ConnectionStatus
 import com.zevarc.pigo.model.PiUiState
+import com.zevarc.pigo.ui.components.CommandPalette
+import com.zevarc.pigo.ui.components.ExtensionDialog
 import com.zevarc.pigo.ui.components.ToolCard
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -115,6 +117,13 @@ fun PiScreen(
             )
         },
         bottomBar = {
+            if (state.inputText.startsWith("/") && state.commands.isNotEmpty()) {
+                CommandPalette(
+                    commands = state.commands,
+                    query = state.inputText,
+                    onPick = { viewModel.onInputChange("/${it.name} ") },
+                )
+            }
             Composer(
                 state = state,
                 onInput = viewModel::onInputChange,
@@ -135,6 +144,30 @@ fun PiScreen(
                     items(state.turns, key = { it.id }) { turn ->
                         TurnRow(turn, viewModel::toggleTool)
                     }
+                    if (state.extensionStatus.isNotEmpty()) {
+                        item(key = "ext-status") {
+                            Text(
+                                text = state.extensionStatus.values.joinToString(" · "),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.tertiary,
+                            )
+                        }
+                    }
+                    state.widgets.forEach { (key, lines) ->
+                        item(key = "widget-$key") {
+                            Surface(
+                                shape = RoundedCornerShape(8.dp),
+                                color = MaterialTheme.colorScheme.surfaceVariant,
+                                modifier = Modifier.fillMaxWidth(),
+                            ) {
+                                Text(
+                                    text = lines.joinToString("\n"),
+                                    style = MaterialTheme.typography.bodySmall,
+                                    modifier = Modifier.padding(8.dp),
+                                )
+                            }
+                        }
+                    }
                     if (state.notices.isNotEmpty()) {
                         item(key = "notices") {
                             Text(
@@ -150,6 +183,13 @@ fun PiScreen(
                 ErrorBanner(message, viewModel::dismissError, Modifier.align(Alignment.TopCenter))
             }
         }
+    }
+
+    state.uiRequest?.let { request ->
+        ExtensionDialog(
+            request = request,
+            onAnswer = { value, confirmed, cancelled -> viewModel.answerUi(value, confirmed, cancelled) },
+        )
     }
 
     if (showSessions) {

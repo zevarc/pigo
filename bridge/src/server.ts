@@ -173,6 +173,26 @@ async function handleClientMessage(ws: WebSocket, raw: string) {
 				bridge.abortSession(sessionId, msg.clearQueue !== false);
 				return;
 
+			case "ui_response": {
+				const ok = bridge.respondToUi(
+					sessionId,
+					String(msg.requestId ?? ""),
+					msg.value,
+					msg.confirmed,
+					msg.cancelled === true
+				);
+				if (!ok) {
+					send(ws, { type: "error", sessionId, message: "unknown or stale ui_request id" });
+				}
+				return;
+			}
+
+			case "get_commands": {
+				const commands = await bridge.getCommands(sessionId);
+				send(ws, { type: "commands_snapshot", sessionId, commands });
+				return;
+			}
+
 			case "get_messages": {
 				const messages = await bridge.getMessages(sessionId);
 				send(ws, { type: "messages_snapshot", sessionId, messages });
@@ -209,7 +229,7 @@ server.on("upgrade", (req, socket, head) => {
 		});
 		ws.on("close", () => {
 			logger.info("[Bridge] client disconnected");
-			bridge.detachClient(ws);
+			bridge.detachClientAndCancelUi(ws);
 		});
 	});
 });

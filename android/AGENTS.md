@@ -43,6 +43,10 @@ MainActivity      两个屏幕的切换，无导航库
 - **输入框右侧只用图标按钮**（`FilledIconButton`）。把 `Icon` 塞进 `Button` 会被默认内边距
   挤成大方块；停止键用 `errorContainer` 容器色，别只把图标染红。
 
+- **扩展对话框必须能回答**：`ui_request` 到达就弹 `ExtensionDialog`，取消也要回
+  `cancelled: true`，否则 pi 侧阻塞。`/` 开头时显示 `CommandPalette`（数据来自
+  `get_commands`）。
+
 ## 与 Bridge 的契约
 
 见仓库根 `README.md` 的事件表。Bridge 侧对应实现是 `bridge/src/normalize.ts`，

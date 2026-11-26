@@ -86,6 +86,11 @@ sudo systemctl enable --now pi-home-bridge@$USER
 
 上行（手机 → Bridge）：`list_sessions` `list_workspaces` `create_session` `delete_session`
 `sync(sessionId,lastSeq)` `prompt(sessionId,message,id)` `abort(sessionId)` `get_messages`
+`get_commands` `ui_response(requestId,value|confirmed|cancelled)`
+
+斜杠命令走的是 `prompt`（pi 把 `/model`、`/compact`、`/skill:xxx` 当普通输入展开），
+扩展需要的交互经 `ui_request` / `ui_response` 往返。客户端断开时 Bridge 会把挂起的
+对话框全部 `cancelled`，否则 pi 会一直等到自己的超时，`agent_settled` 永不出现。
 
 下行（Bridge → 手机）：除 `sessions_snapshot/sessions_updated/session_created/session_deleted/
 sync_response/workspaces_snapshot/messages_snapshot/error` 等控制消息外，会话事件统一带
@@ -101,6 +106,9 @@ sync_response/workspaces_snapshot/messages_snapshot/error` 等控制消息外，
 | `tool_card` / `tool_start` / `tool_progress` / `tool_end` | 工具调用生命周期，`summary` 一行摘要 |
 | `notice` | 压缩、重试、排队、队列清空等提示 |
 | `session_process_exit` | 子进程退出/被回收（下条消息自动拉起） |
+| `ui_request` | **扩展对话框**（select/confirm/input/editor），pi 正阻塞等客户端回答 |
+| `status` / `widget` / `editor_text` | 扩展推来的状态行、文本块、输入框预填 |
+| `commands_snapshot` | `/` 命令列表（扩展命令、prompt 模板、skill）|
 
 重连时客户端发 `sync(sessionId, lastSeq)`，Bridge 回放 `seq > lastSeq` 的事件；
 若游标已滑出 500 条环形缓冲，`sync_response.needsHistoryReload=true`，客户端改用

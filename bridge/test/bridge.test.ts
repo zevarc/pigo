@@ -152,6 +152,62 @@ test("replays only the events a client missed", async () => {
 	}
 });
 
+test("a dialog request is forwarded and the answer reaches pi", async () => {
+	const { bridge } = makeBridge();
+	try {
+		const meta = bridge.createSession(".");
+		const events: Record<string, unknown>[] = [];
+		bridge.attachClient({
+			readyState: 1,
+			send: (raw: string) => events.push(JSON.parse(raw))
+		} as never);
+
+		bridge.sendPrompt(meta.id, "/dialog please");
+		await waitFor(() => events.some((event) => event.type === "ui_request"));
+
+		const request = events.find((event) => event.type === "ui_request")!;
+		assert.equal(request.method, "select");
+		assert.deepEqual(request.options, ["first", "second"]);
+
+		assert.equal(bridge.respondToUi(meta.id, String(request.requestId), "second"), true);
+		await waitFor(() => events.some((event) => event.kind === "extension_notify"));
+		assert.match(String(events.find((event) => event.kind === "extension_notify")!.message), /second/);
+
+		// Replaying a stale id must be rejected, not silently accepted.
+		assert.equal(bridge.respondToUi(meta.id, String(request.requestId), "second"), false);
+	} finally {
+		await bridge.shutdown();
+	}
+});
+
+test("a dialog left hanging by a disconnecting client is cancelled", async () => {
+	const { bridge, recordFile } = makeBridge();
+	try {
+		const meta = bridge.createSession(".");
+		const events: Record<string, unknown>[] = [];
+		const client = {
+			readyState: 1,
+			send: (raw: string) => events.push(JSON.parse(raw))
+		};
+		bridge.attachClient(client as never);
+
+		bridge.sendPrompt(meta.id, "/dialog please");
+		await waitFor(() => events.some((event) => event.type === "ui_request"));
+
+		// The last client is gone: nobody can answer, so the dialog must be
+		// cancelled on pi's side, otherwise it blocks until its own timeout and
+		// the session never settles.
+		bridge.detachClientAndCancelUi(client as never);
+		await waitFor(() =>
+			readCommands(recordFile).some(
+				(command) => command.type === "extension_ui_response" && command.cancelled === true
+			)
+		);
+	} finally {
+		await bridge.shutdown();
+	}
+});
+
 test("a cursor from a previous bridge lifetime asks for a history reload", async () => {
 	const { bridge } = makeBridge();
 	try {

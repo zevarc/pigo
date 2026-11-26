@@ -66,6 +66,8 @@ interface SessionRuntime {
 	idleTimer: NodeJS.Timeout | null;
 	normalizeContext: NormalizeContext;
 	pending: Map<string, PendingCommand>;
+	/** Extension UI dialogs awaiting a client answer. */
+	uiRequests: Map<string, { method: string; since: number }>;
 	/** Prompt command ids awaiting a rejection notice. */
 	promptRequests: Map<string, { clientMessageId?: string }>;
 	exited: boolean;
@@ -128,6 +130,7 @@ export class MultiSessionPiBridge {
 			idleTimer: null,
 			normalizeContext: { toolCalls: new Map() },
 			pending: new Map(),
+			uiRequests: new Map(),
 			promptRequests: new Map(),
 			exited: false
 		};
@@ -277,6 +280,7 @@ export class MultiSessionPiBridge {
 			runtime.exited = true;
 			runtime.isAgentRunning = false;
 			this.failPending(runtime, new Error(`pi process exited (code=${code}, signal=${signal})`));
+			runtime.uiRequests.clear();
 			if (wasRunning) {
 				// The client is waiting on a run that will never settle.
 				this.emitSessionEvent(runtime, { type: "agent_settled", aborted: true });
@@ -379,6 +383,12 @@ export class MultiSessionPiBridge {
 			this.resetIdleTimer(runtime);
 		}
 		if (normalized.event) {
+			if (normalized.event.type === "ui_request") {
+				runtime.uiRequests.set(String(normalized.event.requestId), {
+					method: String(normalized.event.method),
+					since: Date.now()
+				});
+			}
 			this.emitSessionEvent(runtime, normalized.event);
 		}
 	}
@@ -427,6 +437,57 @@ export class MultiSessionPiBridge {
 			runtime.pending.delete(id);
 		}
 		runtime.promptRequests.clear();
+	}
+
+	/** Answers an extension UI dialog; returns false when the id is not pending. */
+	respondToUi(
+		sessionId: string,
+		requestId: string,
+		value?: string,
+		confirmed?: boolean,
+		cancelled = false
+	): boolean {
+		const runtime = this.sessions.get(sessionId);
+		if (!runtime) return false;
+		const pending = runtime.uiRequests.get(requestId);
+		if (!pending) return false;
+		runtime.uiRequests.delete(requestId);
+
+		const response: Record<string, unknown> = { type: "extension_ui_response", id: requestId };
+		if (cancelled) {
+			response.cancelled = true;
+		} else {
+			if (typeof value === "string") response.value = value;
+			if (typeof confirmed === "boolean") response.confirmed = confirmed;
+		}
+		return this.sendCommand(runtime, response);
+	}
+
+	/**
+	 * Cancels every dialog a dead client left hanging. Without this, pi waits for
+	 * a reply that can never arrive and the session never settles.
+	 */
+	private cancelPendingUi(runtime: SessionRuntime, reason: string) {
+		if (runtime.uiRequests.size === 0) return;
+		this.options.logger.warn(
+			`[${runtime.meta.id}] cancelling ${runtime.uiRequests.size} pending UI dialog(s) (${reason})`
+		);
+		for (const requestId of runtime.uiRequests.keys()) {
+			this.sendCommand(runtime, { type: "extension_ui_response", id: requestId, cancelled: true });
+		}
+		runtime.uiRequests.clear();
+	}
+
+	async getCommands(sessionId: string): Promise<Record<string, unknown>[]> {
+		const runtime = this.sessions.get(sessionId);
+		if (!runtime) throw new Error(`Unknown session: ${sessionId}`);
+		const data = await this.request(runtime, { type: "get_commands" }, 20_000);
+		const commands = Array.isArray(data.commands) ? (data.commands as Record<string, unknown>[]) : [];
+		return commands.map((command) => ({
+			name: command.name,
+			description: command.description ?? null,
+			source: command.source ?? null
+		}));
 	}
 
 	private emitSessionEvent(runtime: SessionRuntime, event: { type: string } & Record<string, unknown>) {
@@ -589,6 +650,18 @@ export class MultiSessionPiBridge {
 	}
 
 	// ------------------------------------------------------------------- clients
+
+	/**
+	 * Drops a client. Any dialog it was asked to answer is cancelled: with no
+	 * client left, nobody can ever reply and pi would block until timeout.
+	 */
+	detachClientAndCancelUi(ws: ClientSink) {
+		this.clients.delete(ws);
+		if (this.clients.size > 0) return;
+		for (const runtime of this.sessions.values()) {
+			this.cancelPendingUi(runtime, "no clients connected");
+		}
+	}
 
 	attachClient(ws: ClientSink) {
 		this.clients.add(ws);

@@ -33,6 +33,9 @@ server.ts         HTTP/WS 入口、Bearer/Query 鉴权、消息路由
 - **停子进程先关 stdin**，等宽限期再 `SIGTERM`，最后 `SIGKILL`；直接 kill 会丢会话。
 - 任何路径都要过 `resolveSafeCwd`；新增从客户端来的路径参数时必须复用它。
 - 事件流里塞不进的东西（二进制、图片流）不要偷偷塞 JSON，走单独通道。
+- **`extension_ui_request` 不能丢**。对话框方法（select/confirm/input/editor）要转成
+  `ui_request` 并登记在 `runtime.uiRequests`，客户端回 `ui_response` 才解开；客户端
+  全断开时必须 `cancelPendingUi`，否则 pi 卡在等回答上，会话永远不 settle。
 
 ## 排查顺序
 

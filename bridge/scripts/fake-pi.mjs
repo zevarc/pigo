@@ -29,6 +29,7 @@ function record(command) {
 
 let streaming = false;
 let abortRequested = false;
+let pendingDialog = null;
 
 function respond(command, data, success = true, error) {
 	out({
@@ -47,6 +48,19 @@ function sleep(ms) {
 
 const script = {
 	async prompt(command) {
+		if (String(command.message ?? "").startsWith("/dialog")) {
+			respond(command, { disposition: "handled" });
+			const id = `dlg-${Date.now()}`;
+			out({
+				type: "extension_ui_request",
+				id,
+				method: "select",
+				title: "Pick one",
+				options: ["first", "second"]
+			});
+			pendingDialog = id;
+			return;
+		}
 		if (String(command.message ?? "").startsWith("REJECT")) {
 			respond(command, undefined, false, "rejected by test double");
 			return;
@@ -213,6 +227,22 @@ const script = {
 
 	async clear_queue(command) {
 		respond(command, { steering: [], followUp: [] });
+	},
+
+	async extension_ui_response(command) {
+		if (command.id !== pendingDialog) {
+			out({ type: "notice", kind: "stale_ui_response", id: command.id });
+			return;
+		}
+		pendingDialog = null;
+		const answered = command.cancelled ? "cancelled" : String(command.value ?? command.confirmed);
+		process.stderr.write(`[fake-pi] dialog answered: ${answered}\n`);
+		out({
+			type: "extension_ui_request",
+			id: "note-1",
+			method: "notify",
+			message: `dialog answered: ${answered}`
+		});
 	},
 
 	async set_session_name(command) {

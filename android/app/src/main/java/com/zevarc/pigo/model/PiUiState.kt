@@ -4,6 +4,23 @@ package com.zevarc.pigo.model
  * Everything the UI needs to paint one screen. Immutable so a Compose render
  * never observes a half-applied event.
  */
+/**
+ * A dialog an extension asked us to answer (docs/rpc-extension-ui.md).
+ * While one is pending, pi is blocked waiting for this reply.
+ */
+data class UiRequest(
+    val requestId: String,
+    val method: String,
+    val title: String?,
+    val message: String?,
+    val options: List<String> = emptyList(),
+    val placeholder: String? = null,
+    val prefill: String = "",
+)
+
+/** A `/`-command reported by pi's get_commands. */
+data class CommandInfo(val name: String, val description: String?, val source: String?)
+
 data class PiUiState(
     val connection: ConnectionStatus = ConnectionStatus.DISCONNECTED,
     val sessions: List<SessionSummary> = emptyList(),
@@ -15,6 +32,12 @@ data class PiUiState(
     val inputText: String = "",
     val errorBanner: String? = null,
     val notices: List<String> = emptyList(),
+    val uiRequest: UiRequest? = null,
+    val commands: List<CommandInfo> = emptyList(),
+    /** Status lines pushed by extensions (footer equivalent). */
+    val extensionStatus: Map<String, String> = emptyMap(),
+    /** Widget text blocks pushed by extensions. */
+    val widgets: Map<String, List<String>> = emptyMap(),
 )
 
 enum class ConnectionStatus { DISCONNECTED, CONNECTING, CONNECTED }

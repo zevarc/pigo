@@ -251,7 +251,111 @@ export function normalizePiEvent(raw: Record<string, unknown>, ctx: NormalizeCon
 			return { event: null };
 
 		case "extension_ui_request":
+			return normalizeExtensionUi(raw);
+
+		default:
 			return { event: null };
+	}
+}
+
+/**
+ * Translates the extension UI sub-protocol (docs/rpc-extension-ui.md).
+ *
+ * Slash commands such as `/model` or `/compact` are handled by extensions, and
+ * whatever they need from the user arrives here. Dropping these records (the
+ * original behaviour) makes every interactive command look like a no-op on the
+ * phone: pi blocks on a dialog nobody answers.
+ */
+function normalizeExtensionUi(raw: Record<string, unknown>): Normalized {
+	const method = String(raw.method ?? "");
+	const requestId = String(raw.id ?? "");
+
+	switch (method) {
+		// Dialog methods: the client must answer, or pi waits until its timeout.
+		case "select":
+			return {
+				event: {
+					type: "ui_request",
+					requestId,
+					method,
+					title: raw.title ?? null,
+					message: raw.message ?? null,
+					options: Array.isArray(raw.options) ? raw.options : [],
+					timeout: typeof raw.timeout === "number" ? raw.timeout : null
+				}
+			};
+
+		case "confirm":
+			return {
+				event: {
+					type: "ui_request",
+					requestId,
+					method,
+					title: raw.title ?? null,
+					message: raw.message ?? null,
+					timeout: typeof raw.timeout === "number" ? raw.timeout : null
+				}
+			};
+
+		case "input":
+			return {
+				event: {
+					type: "ui_request",
+					requestId,
+					method,
+					title: raw.title ?? null,
+					placeholder: raw.placeholder ?? null,
+					timeout: typeof raw.timeout === "number" ? raw.timeout : null
+				}
+			};
+
+		case "editor":
+			return {
+				event: {
+					type: "ui_request",
+					requestId,
+					method,
+					title: raw.title ?? null,
+					prefill: raw.prefill ?? "",
+					timeout: typeof raw.timeout === "number" ? raw.timeout : null
+				}
+			};
+
+		// Fire-and-forget notifications.
+		case "notify":
+			return {
+				event: {
+					type: "notice",
+					kind: "extension_notify",
+					message: raw.message ?? "",
+					notifyType: raw.notifyType ?? "info"
+				}
+			};
+
+		case "setStatus":
+			return {
+				event: {
+					type: "status",
+					statusKey: raw.statusKey ?? null,
+					statusText: raw.statusText ?? null
+				}
+			};
+
+		case "setWidget":
+			return {
+				event: {
+					type: "widget",
+					widgetKey: raw.widgetKey ?? null,
+					widgetLines: Array.isArray(raw.widgetLines) ? raw.widgetLines : null,
+					widgetPlacement: raw.widgetPlacement ?? "aboveEditor"
+				}
+			};
+
+		case "setTitle":
+			return { event: { type: "session_title", title: raw.title ?? null } };
+
+		case "set_editor_text":
+			return { event: { type: "editor_text", text: raw.text ?? "" } };
 
 		default:
 			return { event: null };

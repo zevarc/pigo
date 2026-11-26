@@ -99,12 +99,88 @@ test("tool errors are flagged", () => {
 	assert.equal(ctx.toolCalls.get("c2")?.status, "error");
 });
 
-test("command responses and extension UI records are not forwarded as session events", () => {
+test("command responses are not forwarded as session events", () => {
 	assert.equal(normalizePiEvent({ type: "response", success: true }, context()).event, null);
-	assert.equal(
-		normalizePiEvent({ type: "extension_ui_request", method: "setStatus" }, context()).event,
-		null
+});
+
+test("a select dialog becomes a ui_request the client can answer", () => {
+	const result = normalizePiEvent(
+		{
+			type: "extension_ui_request",
+			id: "req-1",
+			method: "select",
+			title: "Stored Search Results",
+			options: ["a", "b"],
+			timeout: 10_000
+		},
+		context()
 	);
+	assert.deepEqual(result.event, {
+		type: "ui_request",
+		requestId: "req-1",
+		method: "select",
+		title: "Stored Search Results",
+		message: null,
+		options: ["a", "b"],
+		timeout: 10_000
+	});
+});
+
+test("confirm / input / editor keep their own fields", () => {
+	const confirm = normalizePiEvent(
+		{ type: "extension_ui_request", id: "c", method: "confirm", title: "Clear session?", message: "lost" },
+		context()
+	).event!;
+	assert.equal(confirm.method, "confirm");
+	assert.equal(confirm.message, "lost");
+
+	const input = normalizePiEvent(
+		{ type: "extension_ui_request", id: "i", method: "input", title: "Web viewer password", placeholder: "min 4 chars" },
+		context()
+	).event!;
+	assert.equal(input.placeholder, "min 4 chars");
+
+	const editor = normalizePiEvent(
+		{ type: "extension_ui_request", id: "e", method: "editor", title: "Edit", prefill: "x" },
+		context()
+	).event!;
+	assert.equal(editor.prefill, "x");
+});
+
+test("fire-and-forget extension UI records are surfaced, not dropped", () => {
+	const notify = normalizePiEvent(
+		{ type: "extension_ui_request", id: "n", method: "notify", message: "No stored results", notifyType: "warning" },
+		context()
+	).event!;
+	assert.equal(notify.type, "notice");
+	assert.equal(notify.kind, "extension_notify");
+	assert.equal(notify.notifyType, "warning");
+
+	const status = normalizePiEvent(
+		{ type: "extension_ui_request", id: "s", method: "setStatus", statusKey: "ext", statusText: "working" },
+		context()
+	).event!;
+	assert.deepEqual(status, { type: "status", statusKey: "ext", statusText: "working" });
+
+	const widget = normalizePiEvent(
+		{
+			type: "extension_ui_request",
+			id: "w",
+			method: "setWidget",
+			widgetKey: "ext",
+			widgetLines: ["a", "b"],
+			widgetPlacement: "belowEditor"
+		},
+		context()
+	).event!;
+	assert.equal(widget.type, "widget");
+	assert.deepEqual(widget.widgetLines, ["a", "b"]);
+
+	const editorText = normalizePiEvent(
+		{ type: "extension_ui_request", id: "t", method: "set_editor_text", text: "prefill" },
+		context()
+	).event!;
+	assert.deepEqual(editorText, { type: "editor_text", text: "prefill" });
 });
 
 test("assistant message_end carries the final text so the client can replace deltas", () => {
