@@ -126,6 +126,10 @@ sync_response/workspaces_snapshot/messages_snapshot/error` 等控制消息外，
 
 会话数据可以有几百 MB（我们这台 73 个会话 / 559 MB，单个最大 54 MB），所以列表只
 读取每个文件的前 64 KB：从中取 header 的 `cwd`、`/name` 和第一条用户消息做预览。
+会话抽屉打开即列出**全部**历史会话，按工作目录分组（组内按最近使用排序），
+顶部有搜索框，行内显示相对时间、大小、短 id 与首条消息；已在运行的会话带「运行中」角标，
+点一下直接切过去，否则按需拉起进程。
+
 点开某个会话时 Bridge 用 `pi --session <file>` 在原工作区拉起进程，历史原样接续。
 
 工作区白名单仍生效：session header 里的 `cwd` 必须落在 `PI_ALLOWED_ROOT` 内。

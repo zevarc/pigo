@@ -150,14 +150,14 @@ class PiViewModel(application: Application) : AndroidViewModel(application) {
         send(payload.toString())
     }
 
-    /** Lists pi's own session store for the resume picker. */
+    /** Lists pi's own session store; the sheet shows every directory at once. */
     fun loadResumeEntries(query: String = "") {
         _state.update { it.copy(resumeQuery = query) }
         send(
             Wire.obj(
                 "type" to JsonPrimitive("list_pi_sessions"),
                 "query" to JsonPrimitive(query),
-                "limit" to JsonPrimitive(50),
+                "limit" to JsonPrimitive(400),
             ).toString(),
         )
     }
@@ -212,7 +212,10 @@ class PiViewModel(application: Application) : AndroidViewModel(application) {
     private fun observeConnection() {
         viewModelScope.launch {
             client.status.collect { status ->
-                if (status == ConnectionStatus.CONNECTED) refreshSessions()
+                if (status == ConnectionStatus.CONNECTED) {
+                    refreshSessions()
+                    loadResumeEntries()
+                }
             }
         }
     }
@@ -245,6 +248,7 @@ class PiViewModel(application: Application) : AndroidViewModel(application) {
 
     private fun syncActiveSession() {
         refreshSessions()
+        loadResumeEntries(_state.value.resumeQuery)
         val sessionId = _state.value.activeSessionId
         if (sessionId == null) return
         send(

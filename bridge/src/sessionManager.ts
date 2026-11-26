@@ -243,7 +243,13 @@ export class MultiSessionPiBridge {
 	}
 
 	/** pi sessions on disk, newest first. Read from headers only. */
-	listPiSessions(query?: string, limit = 50): SessionFileInfo[] {
+	/**
+	 * Sessions on disk, annotated with their live state in this bridge.
+	 *
+	 * `active` means a child process is answering for it right now; the client
+	 * uses that to mark rows that are already running instead of re-spawning.
+	 */
+	listPiSessions(query?: string, limit = 50): (SessionFileInfo & { active: boolean })[] {
 		const rows = listSessionFiles({
 			root: this.options.piSessionsRoot,
 			scanBytes: 64 * 1024,
@@ -259,7 +265,10 @@ export class MultiSessionPiBridge {
 						(row.preview ?? "").toLowerCase().includes(needle)
 				)
 			: rows;
-		return filtered.slice(0, limit);
+		return filtered.slice(0, limit).map((row) => ({
+			...row,
+			active: this.sessions.has(row.id)
+		}));
 	}
 
 	/**

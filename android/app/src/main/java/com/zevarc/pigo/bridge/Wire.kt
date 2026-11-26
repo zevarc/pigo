@@ -10,6 +10,7 @@ import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
+import kotlinx.serialization.json.doubleOrNull
 import kotlinx.serialization.json.longOrNull
 
 /**
@@ -39,7 +40,15 @@ object Wire {
 fun JsonObject.string(key: String): String? =
     (this[key] as? JsonPrimitive)?.takeIf { it.isString }?.contentOrNull
 
-fun JsonObject.long(key: String): Long? = (this[key] as? JsonPrimitive)?.longOrNull
+/**
+ * Reads an integer field; tolerates a fractional value because some fields
+ * (file timestamps) arrive as doubles.
+ */
+fun JsonObject.long(key: String): Long? {
+    val primitive = this[key] as? JsonPrimitive ?: return null
+    primitive.longOrNull?.let { return it }
+    return primitive.doubleOrNull?.toLong()
+}
 
 fun JsonObject.boolean(key: String): Boolean? = (this[key] as? JsonPrimitive)?.booleanOrNull
 

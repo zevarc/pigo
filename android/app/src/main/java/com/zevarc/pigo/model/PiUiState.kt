@@ -63,6 +63,8 @@ data class ResumeEntry(
     val preview: String?,
     val updatedAt: Long,
     val sizeBytes: Long,
+    /** A child process is already serving this session in the bridge. */
+    val active: Boolean = false,
 )
 
 /** A directory under the bridge's allowed root that can host a new session. */

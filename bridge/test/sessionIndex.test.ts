@@ -72,6 +72,13 @@ test("a file without a session header is skipped", () => {
 	assert.deepEqual(listSessionFiles({ root, scanBytes: 4096, limit: 10 }), []);
 });
 
+test("timestamps are integers, not fractional mtimes", () => {
+	const { file } = makeStore();
+	const info = describeSessionFile(file, "01a215bb", Math.round(Date.now()), 64 * 1024)!;
+	// mtimeMs is fractional; a client parsing this as an integer would get 0.
+	assert.ok(Number.isInteger(info.updatedAt), `updatedAt must be an integer: ${info.updatedAt}`);
+});
+
 test("a missing store is not fatal", () => {
 	assert.deepEqual(
 		listSessionFiles({ root: path.join(tmpdir(), "does-not-exist-xyz"), scanBytes: 4096, limit: 10 }),

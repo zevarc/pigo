@@ -176,7 +176,8 @@ export function listSessionFiles(options: SessionIndexOptions): SessionFileInfo[
 			const file = path.join(full, entry);
 			let updatedAt = 0;
 			try {
-				updatedAt = statSync(file).mtimeMs;
+				// mtimeMs is fractional; clients parse this as an integer.
+				updatedAt = Math.round(statSync(file).mtimeMs);
 			} catch {
 				continue;
 			}

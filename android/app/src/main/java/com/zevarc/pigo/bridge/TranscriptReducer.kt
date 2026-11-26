@@ -325,6 +325,7 @@ class TranscriptReducer {
                 preview = obj.string("preview"),
                 updatedAt = obj.long("updatedAt") ?: 0L,
                 sizeBytes = obj.long("sizeBytes") ?: 0L,
+                active = obj.boolean("active") == true,
             )
         }
         return state.copy(resumeEntries = entries)

@@ -207,6 +207,10 @@ fun PiScreen(
     }
 
     if (showSessions) {
+        // Refresh on every open: sessions may have appeared or finished since.
+        LaunchedEffect(showSessions) {
+            if (showSessions) viewModel.loadResumeEntries(state.resumeQuery)
+        }
         ModalBottomSheet(
             onDismissRequest = { showSessions = false },
             sheetState = sheetState,

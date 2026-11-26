@@ -5,19 +5,18 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Delete
-import androidx.compose.material.icons.filled.History
+import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.Badge
-import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -38,13 +37,19 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.zevarc.pigo.model.PiUiState
+import com.zevarc.pigo.model.ResumeEntry
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 
 /**
- * Bottom sheet with two sections: existing sessions (tap to switch, running
- * ones carry a badge) and a "new session" form fed by the bridge's workspace
- * whitelist, so the client never types a path blind.
+ * Everything the phone can switch to, in one list.
+ *
+ * Like pi's own `/resume`, this is built from the sessions pi has on disk,
+ * grouped by working directory — the user thinks in projects, not in ids. A
+ * session that the bridge is already serving is marked and goes straight to
+ * it; anything else is resumed lazily on tap.
  */
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SessionSheet(
     state: PiUiState,
@@ -55,18 +60,23 @@ fun SessionSheet(
     onSearch: (String) -> Unit,
     onResume: (String) -> Unit,
 ) {
+    var expandedNew by remember { mutableStateOf(false) }
     var cwd by remember { mutableStateOf("") }
     var title by remember { mutableStateOf("") }
-    var expandedNew by remember { mutableStateOf(false) }
-    var expandedResume by remember { mutableStateOf(false) }
-    var query by remember { mutableStateOf("") }
 
-    // Plain Column + scroll: a bottom sheet measures its content with an
-    // unbounded height, so a LazyColumn would collapse to zero.
+    val query = state.resumeQuery
+    val entries = state.resumeEntries
+    // Directory order: most recently used first, so the top of the sheet is
+    // where the user was last working.
+    val groups = entries
+        .groupBy { it.cwd }
+        .toList()
+        .sortedByDescending { (_, rows) -> rows.maxOfOrNull { it.updatedAt } ?: 0L }
+
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .heightIn(max = 560.dp)
+            .heightIn(max = 620.dp)
             .verticalScroll(rememberScrollState())
             .padding(bottom = 24.dp),
     ) {
@@ -74,29 +84,37 @@ fun SessionSheet(
             modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            Text("会话", style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
+            Column(modifier = Modifier.weight(1f)) {
+                Text("会话", style = MaterialTheme.typography.titleMedium)
+                Text(
+                    text = "${entries.size} 个历史会话 · ${groups.size} 个目录",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
             IconButton(onClick = onRefresh) { Icon(Icons.Filled.Refresh, contentDescription = "刷新") }
-            TextButton(onClick = {
-                expandedNew = !expandedNew
-                expandedResume = false
-            }) {
+            TextButton(onClick = { expandedNew = !expandedNew }) {
                 Icon(Icons.Filled.Add, contentDescription = null, modifier = Modifier.padding(end = 4.dp))
                 Text("新建")
             }
-            TextButton(onClick = {
-                expandedResume = !expandedResume
-                expandedNew = false
-                if (expandedResume && state.resumeEntries.isEmpty()) onSearch("")
-            }) {
-                Icon(Icons.Filled.History, contentDescription = null, modifier = Modifier.padding(end = 4.dp))
-                Text("历史会话")
-            }
         }
 
+        OutlinedTextField(
+            value = query,
+            onValueChange = onSearch,
+            placeholder = { Text("搜索目录、内容或 id") },
+            leadingIcon = { Icon(Icons.Filled.Search, contentDescription = null) },
+            singleLine = true,
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
+        )
+
         if (expandedNew) {
-            Column(modifier = Modifier.padding(horizontal = 16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Column(
+                modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
                 Text(
-                    text = "工作区（root: ${state.workspaceRoot ?: "未知"}）",
+                    text = "工作区根：${state.workspaceRoot ?: "未知"}",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -120,7 +138,7 @@ fun SessionSheet(
                 OutlinedTextField(
                     value = cwd,
                     onValueChange = { cwd = it },
-                    label = { Text("相对工作区路径，留空为根") },
+                    label = { Text("相对路径，留空为根") },
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth(),
                 )
@@ -131,137 +149,144 @@ fun SessionSheet(
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth(),
                 )
-                Row {
-                    TextButton(
-                        onClick = {
-                            onCreate(cwd, title.ifBlank { null })
-                            cwd = ""
-                            title = ""
-                            expandedNew = false
-                        },
-                    ) { Text("创建并切入") }
-                }
-                HorizontalDivider()
-            }
-        }
-
-        if (!expandedResume) {
-            Surface(
-                shape = RoundedCornerShape(10.dp),
-                color = MaterialTheme.colorScheme.secondaryContainer,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 16.dp, vertical = 4.dp)
-                    .clickable {
-                        expandedResume = true
+                TextButton(
+                    onClick = {
+                        onCreate(cwd, title.ifBlank { null })
+                        cwd = ""
+                        title = ""
                         expandedNew = false
-                        if (state.resumeEntries.isEmpty()) onSearch("")
                     },
-            ) {
-                Row(
-                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Icon(Icons.Filled.History, contentDescription = null)
-                    Text(
-                        text = "继续之前的会话",
-                        style = MaterialTheme.typography.bodyMedium,
-                        modifier = Modifier.padding(start = 8.dp).weight(1f),
-                    )
-                    Text(
-                        text = "从 pi 的历史记录中恢复",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                }
-            }
-        }
-
-        if (expandedResume) {
-            Column(modifier = Modifier.padding(horizontal = 16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                OutlinedTextField(
-                    value = query,
-                    onValueChange = {
-                        query = it
-                        onSearch(it)
-                    },
-                    label = { Text("搜索历史会话（id / 目录 / 内容）") },
-                    singleLine = true,
-                    modifier = Modifier.fillMaxWidth(),
-                )
-                if (state.resumeEntries.isEmpty()) {
-                    Text(
-                        text = "没有匹配的历史会话",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                }
-                state.resumeEntries.forEach { entry ->
-                    ListItem(
-                        headlineContent = {
-                            Text(
-                                text = entry.name ?: entry.cwd.substringAfterLast('/').ifBlank { entry.id.take(8) },
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
-                            )
-                        },
-                        supportingContent = {
-                            Text(
-                                text = entry.cwd + "\n" + (entry.preview ?: entry.id),
-                                style = MaterialTheme.typography.bodySmall,
-                                maxLines = 2,
-                                overflow = TextOverflow.Ellipsis,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            )
-                        },
-                        modifier = Modifier.clickable { onResume(entry.id) },
-                    )
-                }
+                ) { Text("创建并切入") }
                 HorizontalDivider()
             }
         }
 
-        if (state.sessions.isEmpty()) {
+        if (groups.isEmpty()) {
             Text(
-                text = "还没有会话",
+                text = if (query.isBlank()) "还没有历史会话" else "没有匹配的会话",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.padding(16.dp),
             )
         }
 
-        state.sessions.forEach { session ->
-            ListItem(
-                    colors = ListItemDefaults.colors(
-                        containerColor = if (session.id == state.activeSessionId) {
-                            MaterialTheme.colorScheme.primary.copy(alpha = 0.10f)
-                        } else {
-                            MaterialTheme.colorScheme.surface
-                        },
-                    ),
-                    headlineContent = {
-                        Text(session.title, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                    },
-                    supportingContent = {
-                        Text(
-                            (if (session.processAlive) "● 运行中" else "○ 已回收") + "  " + session.cwd,
-                            style = MaterialTheme.typography.bodySmall,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                        )
-                    },
-                    trailingContent = {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            if (session.isAgentRunning) {
-                                Badge { Text("任务运行中") }
-                            }
-                            IconButton(onClick = { onDelete(session.id) }) {
-                                Icon(Icons.Filled.Delete, contentDescription = "删除会话")
-                            }
-                        }
-                    },
-                modifier = Modifier.clickable { onSelect(session.id) },
+        groups.forEach { (dir, rows) ->
+            FolderHeader(dir = dir, count = rows.size)
+            rows.sortedByDescending { it.updatedAt }.forEach { entry ->
+                SessionRow(
+                    entry = entry,
+                    isActive = entry.id == state.activeSessionId,
+                    onClick = { if (entry.active) onSelect(entry.id) else onResume(entry.id) },
+                    onDelete = { onDelete(entry.id) },
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun FolderHeader(dir: String, count: Int) {
+    val name = dir.substringAfterLast('/').ifBlank { dir }
+    val parent = dir.substringBeforeLast('/', "").removePrefix("/")
+    Surface(color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)) {
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 6.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Icon(
+                Icons.Filled.Folder,
+                contentDescription = null,
+                modifier = Modifier.padding(end = 6.dp),
+            )
+            Text(
+                text = name,
+                style = MaterialTheme.typography.labelLarge,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            if (parent.isNotEmpty()) {
+                Text(
+                    text = "  ~/$parent",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.MiddleEllipsis,
+                    modifier = Modifier.weight(1f),
+                )
+            } else {
+                Row(modifier = Modifier.weight(1f)) {}
+            }
+            Text(
+                text = "$count",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
     }
+}
+
+@Composable
+private fun SessionRow(
+    entry: ResumeEntry,
+    isActive: Boolean,
+    onClick: () -> Unit,
+    onDelete: () -> Unit,
+) {
+    ListItem(
+        colors = ListItemDefaults.colors(
+            containerColor = if (isActive) {
+                MaterialTheme.colorScheme.primary.copy(alpha = 0.12f)
+            } else {
+                MaterialTheme.colorScheme.surface
+            },
+        ),
+        headlineContent = {
+            Text(
+                text = entry.name ?: entry.preview?.take(40) ?: entry.id.take(8),
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                style = MaterialTheme.typography.bodyMedium,
+            )
+        },
+        supportingContent = {
+            Text(
+                text = "${relativeTime(entry.updatedAt)} · ${fileSize(entry.sizeBytes)} · ${entry.id.take(8)}",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        },
+        leadingContent = if (isActive) {
+            { Text("●", color = MaterialTheme.colorScheme.primary) }
+        } else {
+            null
+        },
+        trailingContent = {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                if (entry.active) Badge { Text("运行中") }
+                IconButton(onClick = onDelete) {
+                    Icon(Icons.Filled.Delete, contentDescription = "删除会话")
+                }
+            }
+        },
+        modifier = Modifier.clickable(onClick = onClick),
+    )
+}
+
+private fun relativeTime(updatedAt: Long): String {
+    if (updatedAt <= 0L) return "未知时间"
+    val delta = System.currentTimeMillis() - updatedAt
+    return when {
+        delta < 60_000L -> "刚刚"
+        delta < 3_600_000L -> "${delta / 60_000L} 分钟前"
+        delta < 86_400_000L -> "${delta / 3_600_000L} 小时前"
+        delta < 7 * 86_400_000L -> "${delta / 86_400_000L} 天前"
+        else -> SimpleDateFormat("MM-dd HH:mm", Locale.getDefault()).format(Date(updatedAt))
+    }
+}
+
+private fun fileSize(bytes: Long): String = when {
+    bytes <= 0L -> "—"
+    bytes < 1024 -> "${bytes}B"
+    bytes < 1024 * 1024 -> "${bytes / 1024}KB"
+    else -> String.format(Locale.US, "%.1fMB", bytes / 1048576.0)
 }
