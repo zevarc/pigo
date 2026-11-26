@@ -48,6 +48,14 @@ server.ts         HTTP/WS 入口、Bearer/Query 鉴权、消息路由
 - 恢复时用 `--session <file>`，不要用 `--session-id`：后者会在 bridge 自己的目录里另建
   一个空会话。
 
+## 常驻部署
+
+- macOS 用 `scripts/install-launchd.sh` 安装 LaunchAgent。**不要把 token 写进 plist**：
+  `scripts/launchd-run.sh` 负责 `source .env` 再 `exec node`，`.env` 是唯一配置源。
+- 改完 `.env` 必须 `launchctl unload/load` 才生效（进程启动时读取一次）。
+- 手工在终端里 `node dist/server.js` 也是可行的调试方式，但进程会挂在那个 TTY 上，
+  关标签页会被 SIGHUP 带走；长期运行一律走 LaunchAgent。
+
 ## 排查顺序
 
 1. `curl localhost:8787/health`

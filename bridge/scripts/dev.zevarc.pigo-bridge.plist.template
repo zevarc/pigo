@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Template: bridge/scripts/install-launchd.sh fills in the paths and installs
+  this to ~/Library/LaunchAgents. No secrets belong here — all configuration
+  lives in bridge/.env and is read by scripts/launchd-run.sh.
+-->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>dev.zevarc.pigo-bridge</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>__BRIDGE_HOME__/scripts/launchd-run.sh</string>
+    </array>
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>BRIDGE_HOME</key>
+        <string>__BRIDGE_HOME__</string>
+        <key>HOME</key>
+        <string>__HOME__</string>
+        <key>PATH</key>
+        <string>__PATH__</string>
+    </dict>
+    <key>WorkingDirectory</key>
+    <string>__BRIDGE_HOME__</string>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <true/>
+    <key>StandardOutPath</key>
+    <string>__BRIDGE_HOME__/data/bridge.out.log</string>
+    <key>StandardErrorPath</key>
+    <string>__BRIDGE_HOME__/data/bridge.err.log</string>
+    <key>ProcessType</key>
+    <string>Background</string>
+</dict>
+</plist>

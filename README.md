@@ -72,7 +72,21 @@ JAVA_HOME="/Applications/Android Studio.app/Contents/jbr/Contents/Home" \
 | 用 Android **模拟器** 连本机 | `10.0.2.2:8787`（模拟器里访问宿主机 loopback 的特例地址） |
 | 想用浏览器排查（不用装 App） | 打开 `http://127.0.0.1:8787/?token=<你的token>` |
 
-### 3. 生产部署（Linux/NAS）
+### 3. 常驻运行
+
+**macOS**（LaunchAgent，登录后自动启动，退出一律重启）：
+
+```bash
+cd bridge && npm run build
+./scripts/install-launchd.sh          # 装/更新；--uninstall 卸载
+launchctl list | grep pigo            # 应有一行，退出码 0
+```
+
+plist 里**不含任何密钥**：launchd 只调用 `scripts/launchd-run.sh`，
+由它在启动时 `source bridge/.env`。改配置只改 `.env`，然后
+`launchctl unload/load ~/Library/LaunchAgents/dev.zevarc.pigo-bridge.plist`。
+
+**Linux/NAS**：
 
 ```bash
 sudo cp bridge/systemd/pi-home-bridge@.service /etc/systemd/system/
