@@ -14,17 +14,21 @@ import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.ErrorOutline
 import androidx.compose.material.icons.filled.ErrorOutline
-import androidx.compose.material.icons.filled.Dns
 import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Stop
@@ -55,6 +59,8 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.TextLinkStyles
@@ -123,6 +129,10 @@ fun PiScreen(
                         viewModel.resumeSession(it)
                         closeSessions()
                     },
+                    onOpenSettings = {
+                        closeSessions()
+                        onOpenSettings()
+                    },
                 )
             }
         },
@@ -131,40 +141,27 @@ fun PiScreen(
         topBar = {
             TopAppBar(
                 modifier = Modifier.statusBarsPadding(),
-                title = {
-                    Column {
-                        val active = state.sessions.firstOrNull { it.id == state.activeSessionId }
-                        Text(
-                            text = active?.title
-                                ?: state.activeSessionId?.take(8)
-                                ?: "PiGo",
-                            style = MaterialTheme.typography.titleMedium,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                        )
-                        Text(
-                            text = connectionLabel(state.connection),
-                            style = MaterialTheme.typography.bodySmall,
-                            color = when (state.connection) {
-                                ConnectionStatus.CONNECTED -> MaterialTheme.colorScheme.secondary
-                                ConnectionStatus.CONNECTING -> MaterialTheme.colorScheme.tertiary
-                                ConnectionStatus.DISCONNECTED -> MaterialTheme.colorScheme.error
-                            },
-                        )
-                    }
-                },
-                actions = {
-                    if (state.connection != ConnectionStatus.CONNECTED) {
-                        IconButton(onClick = viewModel::reconnect) {
-                            Icon(Icons.Filled.Dns, contentDescription = "重连")
-                        }
-                    }
+                navigationIcon = {
                     IconButton(onClick = openSessions) {
                         Icon(Icons.Filled.Menu, contentDescription = "会话列表")
                     }
-                    IconButton(onClick = onOpenSettings) {
-                        Icon(Icons.Filled.Settings, contentDescription = "设置")
-                    }
+                },
+                title = {
+                    val active = state.sessions.firstOrNull { it.id == state.activeSessionId }
+                    Text(
+                        text = active?.title ?: state.activeSessionId?.take(8) ?: "PiGo",
+                        style = MaterialTheme.typography.titleMedium,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                },
+                actions = {
+                    // Connection is a permanent, glanceable indicator — not a
+                    // dismissible message and not a duplicate of the title.
+                    ConnectionIndicator(
+                        status = state.connection,
+                        onReconnect = viewModel::reconnect,
+                    )
                 },
             )
         },
@@ -486,8 +483,34 @@ private fun ErrorChip(message: String, onDismiss: () -> Unit, modifier: Modifier
     }
 }
 
-private fun connectionLabel(status: ConnectionStatus): String = when (status) {
-    ConnectionStatus.CONNECTED -> "Tailscale 已连通"
-    ConnectionStatus.CONNECTING -> "连接中…"
-    ConnectionStatus.DISCONNECTED -> "已断开"
+/**
+ * Always-visible link indicator: green antenna when the tailnet link is up,
+ * amber while connecting, red when it is down (tap to retry).
+ */
+@Composable
+private fun ConnectionIndicator(status: ConnectionStatus, onReconnect: () -> Unit) {
+    val scheme = MaterialTheme.colorScheme
+    val color = when (status) {
+        ConnectionStatus.CONNECTED -> Color(0xFF3FB950)
+        ConnectionStatus.CONNECTING -> scheme.tertiary
+        ConnectionStatus.DISCONNECTED -> scheme.error
+    }
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier
+            .padding(end = 12.dp)
+            .clip(RoundedCornerShape(16.dp))
+            .clickable(enabled = status == ConnectionStatus.DISCONNECTED, onClick = onReconnect)
+            .padding(horizontal = 8.dp, vertical = 4.dp),
+    ) {
+        Box(modifier = Modifier.size(10.dp).clip(CircleShape).background(color))
+        if (status == ConnectionStatus.CONNECTING) {
+            Spacer(Modifier.width(6.dp))
+            CircularProgressIndicator(
+                modifier = Modifier.size(12.dp),
+                strokeWidth = 1.5.dp,
+                color = color,
+            )
+        }
+    }
 }

@@ -16,6 +16,7 @@ import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.Badge
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -59,6 +60,7 @@ fun SessionSheet(
     onRefresh: () -> Unit,
     onSearch: (String) -> Unit,
     onResume: (String) -> Unit,
+    onOpenSettings: () -> Unit,
 ) {
     var expandedNew by remember { mutableStateOf(false) }
     var cwd by remember { mutableStateOf("") }
@@ -181,6 +183,22 @@ fun SessionSheet(
                 )
             }
         }
+
+        HorizontalDivider(modifier = Modifier.padding(top = 8.dp))
+        ListItem(
+            headlineContent = { Text("设置") },
+            supportingContent = {
+                Text(
+                    text = state.workspaceRoot?.let { "Bridge 根目录 $it" } ?: "地址与 Token",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            },
+            leadingContent = { Icon(Icons.Filled.Settings, contentDescription = null) },
+            modifier = Modifier.clickable { onOpenSettings() },
+        )
     }
 }
 
