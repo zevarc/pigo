@@ -45,6 +45,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -57,6 +58,7 @@ import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import kotlinx.coroutines.launch
 import com.mikepenz.markdown.m3.Markdown
 import com.mikepenz.markdown.m3.markdownColor
 import com.mikepenz.markdown.m3.markdownTypography
@@ -76,6 +78,13 @@ fun PiScreen(
     val state by viewModel.state.collectAsStateWithLifecycle()
     var showSessions by remember { mutableStateOf(false) }
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    val scope = rememberCoroutineScope()
+
+    // A ModalBottomSheet only leaves the window after its hide animation runs;
+    // flipping the boolean alone leaves an invisible sheet blocking input.
+    val closeSessions: () -> Unit = {
+        scope.launch { sheetState.hide() }.invokeOnCompletion { showSessions = false }
+    }
     val listState = rememberLazyListState()
 
     // Follow the stream while text arrives.
@@ -206,15 +215,15 @@ fun PiScreen(
                 state = state,
                 onSelect = {
                     viewModel.selectSession(it)
-                    showSessions = false
+                    closeSessions()
                 },
                 onCreate = { cwd, title -> viewModel.createSession(cwd, title) },
                 onDelete = viewModel::deleteSession,
                 onRefresh = viewModel::refreshSessions,
                 onSearch = viewModel::loadResumeEntries,
-                onResume = {
-                    viewModel.resumeSession(it)
-                    showSessions = false
+                onResume = { entryId ->
+                    viewModel.resumeSession(entryId)
+                    closeSessions()
                 },
             )
         }

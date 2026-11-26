@@ -76,18 +76,20 @@ fun SessionSheet(
         ) {
             Text("会话", style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
             IconButton(onClick = onRefresh) { Icon(Icons.Filled.Refresh, contentDescription = "刷新") }
-            IconButton(onClick = {
+            TextButton(onClick = {
                 expandedNew = !expandedNew
                 expandedResume = false
             }) {
-                Icon(Icons.Filled.Add, contentDescription = "新建会话")
+                Icon(Icons.Filled.Add, contentDescription = null, modifier = Modifier.padding(end = 4.dp))
+                Text("新建")
             }
-            IconButton(onClick = {
+            TextButton(onClick = {
                 expandedResume = !expandedResume
                 expandedNew = false
                 if (expandedResume && state.resumeEntries.isEmpty()) onSearch("")
             }) {
-                Icon(Icons.Filled.History, contentDescription = "恢复历史会话")
+                Icon(Icons.Filled.History, contentDescription = null, modifier = Modifier.padding(end = 4.dp))
+                Text("历史会话")
             }
         }
 
@@ -140,6 +142,38 @@ fun SessionSheet(
                     ) { Text("创建并切入") }
                 }
                 HorizontalDivider()
+            }
+        }
+
+        if (!expandedResume) {
+            Surface(
+                shape = RoundedCornerShape(10.dp),
+                color = MaterialTheme.colorScheme.secondaryContainer,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp, vertical = 4.dp)
+                    .clickable {
+                        expandedResume = true
+                        expandedNew = false
+                        if (state.resumeEntries.isEmpty()) onSearch("")
+                    },
+            ) {
+                Row(
+                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Icon(Icons.Filled.History, contentDescription = null)
+                    Text(
+                        text = "继续之前的会话",
+                        style = MaterialTheme.typography.bodyMedium,
+                        modifier = Modifier.padding(start = 8.dp).weight(1f),
+                    )
+                    Text(
+                        text = "从 pi 的历史记录中恢复",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
             }
         }
 

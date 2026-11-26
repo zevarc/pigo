@@ -162,9 +162,17 @@ class PiViewModel(application: Application) : AndroidViewModel(application) {
         )
     }
 
-    /** Opens an existing pi session by id; the bridge spawns it in its own cwd. */
+    /**
+     * Opens an existing pi session by id.
+     *
+     * The cursor starts at 0 on purpose: the transcript is rebuilt from pi's own
+     * message list, and any events emitted while resuming are replayed after it.
+     */
     fun resumeSession(sessionId: String) {
         reducer.resetCursor()
+        _state.update {
+            it.copy(activeSessionId = null, turns = emptyList(), notices = emptyList(), errorBanner = null)
+        }
         send(
             Wire.obj(
                 "type" to JsonPrimitive("resume_session"),
