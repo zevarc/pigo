@@ -1,5 +1,8 @@
 package com.zevarc.pigo.ui
 
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -19,11 +22,13 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.ErrorOutline
+import androidx.compose.material.icons.filled.ErrorOutline
 import androidx.compose.material.icons.filled.Dns
 import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Stop
-import androidx.compose.material.icons.filled.SwapHoriz
+import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material3.Badge
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -33,13 +38,15 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.DrawerValue
+import androidx.compose.material3.ModalDrawerSheet
+import androidx.compose.material3.ModalNavigationDrawer
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.rememberDrawerState
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
-import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -58,6 +65,8 @@ import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import com.mikepenz.markdown.m3.Markdown
 import com.mikepenz.markdown.m3.markdownColor
@@ -76,14 +85,18 @@ fun PiScreen(
     onOpenSettings: () -> Unit,
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
-    var showSessions by remember { mutableStateOf(false) }
-    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    val drawerState = rememberDrawerState(DrawerValue.Closed)
     val scope = rememberCoroutineScope()
 
-    // A ModalBottomSheet only leaves the window after its hide animation runs;
-    // flipping the boolean alone leaves an invisible sheet blocking input.
+    // The session list is a side rail, not a modal sheet: you switch projects
+    // far more often than you change screens, and a sheet hides the transcript.
+    val openSessions = { scope.launch { drawerState.open() }; Unit }
+    LaunchedEffect(drawerState.currentValue) {
+        if (drawerState.currentValue == DrawerValue.Open) viewModel.loadResumeEntries(state.resumeQuery)
+    }
     val closeSessions: () -> Unit = {
-        scope.launch { sheetState.hide() }.invokeOnCompletion { showSessions = false }
+        scope.launch { drawerState.close() }
+        Unit
     }
     val listState = rememberLazyListState()
 
@@ -92,14 +105,39 @@ fun PiScreen(
         if (state.turns.isNotEmpty()) listState.animateScrollToItem(state.turns.lastIndex)
     }
 
+    ModalNavigationDrawer(
+        drawerState = drawerState,
+        drawerContent = {
+            ModalDrawerSheet(modifier = Modifier.widthIn(max = 360.dp)) {
+                SessionSheet(
+                    state = state,
+                    onSelect = {
+                        viewModel.selectSession(it)
+                        closeSessions()
+                    },
+                    onCreate = { cwd, title -> viewModel.createSession(cwd, title) },
+                    onDelete = viewModel::deleteSession,
+                    onRefresh = viewModel::refreshSessions,
+                    onSearch = viewModel::loadResumeEntries,
+                    onResume = {
+                        viewModel.resumeSession(it)
+                        closeSessions()
+                    },
+                )
+            }
+        },
+    ) {
     Scaffold(
         topBar = {
             TopAppBar(
                 modifier = Modifier.statusBarsPadding(),
                 title = {
                     Column {
+                        val active = state.sessions.firstOrNull { it.id == state.activeSessionId }
                         Text(
-                            text = state.sessions.firstOrNull { it.id == state.activeSessionId }?.title ?: "PiGo",
+                            text = active?.title
+                                ?: state.activeSessionId?.take(8)
+                                ?: "PiGo",
                             style = MaterialTheme.typography.titleMedium,
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis,
@@ -121,8 +159,8 @@ fun PiScreen(
                             Icon(Icons.Filled.Dns, contentDescription = "重连")
                         }
                     }
-                    IconButton(onClick = { showSessions = true }) {
-                        Icon(Icons.Filled.SwapHoriz, contentDescription = "切换会话")
+                    IconButton(onClick = openSessions) {
+                        Icon(Icons.Filled.Menu, contentDescription = "会话列表")
                     }
                     IconButton(onClick = onOpenSettings) {
                         Icon(Icons.Filled.Settings, contentDescription = "设置")
@@ -194,7 +232,11 @@ fun PiScreen(
                 }
             }
             state.errorBanner?.let { message ->
-                ErrorBanner(message, viewModel::dismissError, Modifier.align(Alignment.TopCenter))
+                ErrorChip(
+                    message = message,
+                    onDismiss = viewModel::dismissError,
+                    modifier = Modifier.align(Alignment.TopEnd).padding(12.dp),
+                )
             }
         }
     }
@@ -206,31 +248,6 @@ fun PiScreen(
         )
     }
 
-    if (showSessions) {
-        // Refresh on every open: sessions may have appeared or finished since.
-        LaunchedEffect(showSessions) {
-            if (showSessions) viewModel.loadResumeEntries(state.resumeQuery)
-        }
-        ModalBottomSheet(
-            onDismissRequest = { showSessions = false },
-            sheetState = sheetState,
-        ) {
-            SessionSheet(
-                state = state,
-                onSelect = {
-                    viewModel.selectSession(it)
-                    closeSessions()
-                },
-                onCreate = { cwd, title -> viewModel.createSession(cwd, title) },
-                onDelete = viewModel::deleteSession,
-                onRefresh = viewModel::refreshSessions,
-                onSearch = viewModel::loadResumeEntries,
-                onResume = { entryId ->
-                    viewModel.resumeSession(entryId)
-                    closeSessions()
-                },
-            )
-        }
     }
 }
 
@@ -387,12 +404,21 @@ private fun EmptyState(state: PiUiState) {
     Box(modifier = Modifier.fillMaxSize().padding(24.dp), contentAlignment = Alignment.Center) {
         when (state.connection) {
             ConnectionStatus.CONNECTED -> Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                Text("已连接，但没有会话", style = MaterialTheme.typography.titleMedium)
-                Text(
-                    "点右上角切换会话，或先在 Bridge 调测台创建",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
+                if (state.activeSessionId != null) {
+                    Text("正在载入历史…", style = MaterialTheme.typography.titleMedium)
+                    Text(
+                        "这个会话还没有消息，或历史仍在拉取",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                } else {
+                    Text("已连接，但未选择会话", style = MaterialTheme.typography.titleMedium)
+                    Text(
+                        "点左上角菜单选择历史会话",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
             }
             ConnectionStatus.CONNECTING -> Column(horizontalAlignment = Alignment.CenterHorizontally) {
                 CircularProgressIndicator()
@@ -410,24 +436,52 @@ private fun EmptyState(state: PiUiState) {
     }
 }
 
+/**
+ * Transient error indicator.
+ *
+ * A full-width banner on top of the transcript is both intrusive and, as
+ * shipped, permanent — nothing ever cleared it. This is a small badge in the
+ * corner that disappears on its own after a few seconds (or on tap), so the
+ * state can never look stuck.
+ */
 @Composable
-private fun ErrorBanner(message: String, onDismiss: () -> Unit, modifier: Modifier = Modifier) {
-    Surface(
-        color = MaterialTheme.colorScheme.errorContainer,
-        shape = RoundedCornerShape(10.dp),
-        modifier = modifier.padding(12.dp),
-    ) {
-        Row(
-            modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
-            verticalAlignment = Alignment.CenterVertically,
+private fun ErrorChip(message: String, onDismiss: () -> Unit, modifier: Modifier = Modifier) {
+    var visible by remember(message) { mutableStateOf(true) }
+
+    LaunchedEffect(message) {
+        delay(6_000)
+        visible = false
+        onDismiss()
+    }
+
+    AnimatedVisibility(visible = visible, enter = fadeIn(), exit = fadeOut(), modifier = modifier) {
+        Surface(
+            color = MaterialTheme.colorScheme.errorContainer,
+            shape = RoundedCornerShape(20.dp),
+            onClick = {
+                visible = false
+                onDismiss()
+            },
         ) {
-            Text(
-                text = message,
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onErrorContainer,
-                modifier = Modifier.weight(1f),
-            )
-            IconButton(onClick = onDismiss) { Icon(Icons.Filled.Close, contentDescription = "关闭") }
+            Row(
+                modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Icon(
+                    Icons.Filled.ErrorOutline,
+                    contentDescription = "错误",
+                    tint = MaterialTheme.colorScheme.error,
+                    modifier = Modifier.padding(end = 6.dp),
+                )
+                Text(
+                    text = message,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onErrorContainer,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.widthIn(max = 260.dp),
+                )
+            }
         }
     }
 }

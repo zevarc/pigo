@@ -7,6 +7,7 @@ import com.zevarc.pigo.bridge.BridgeSocketClient
 import com.zevarc.pigo.bridge.TranscriptReducer
 import com.zevarc.pigo.bridge.Wire
 import com.zevarc.pigo.bridge.boolean
+import com.zevarc.pigo.bridge.obj
 import com.zevarc.pigo.bridge.long
 import com.zevarc.pigo.bridge.string
 import com.zevarc.pigo.data.BridgeSettings
@@ -170,8 +171,12 @@ class PiViewModel(application: Application) : AndroidViewModel(application) {
      */
     fun resumeSession(sessionId: String) {
         reducer.resetCursor()
+        // Do NOT clear activeSessionId here: a `sessions_snapshot` can arrive
+        // between the request and `session_created`, and with a null active id
+        // the reducer falls back to "first session in the list" — switching the
+        // user somewhere else and emptying the transcript.
         _state.update {
-            it.copy(activeSessionId = null, turns = emptyList(), notices = emptyList(), errorBanner = null)
+            it.copy(turns = emptyList(), notices = emptyList(), errorBanner = null)
         }
         send(
             Wire.obj(
@@ -227,11 +232,19 @@ class PiViewModel(application: Application) : AndroidViewModel(application) {
                 val before = _state.value.activeSessionId
                 _state.update { reducer.reduce(it, event) }
                 val after = _state.value.activeSessionId
-                if (after != null && after != before) {
+
+                // A session became active: load its transcript. `session_created`
+                // carries the id explicitly, which is the only reliable signal —
+                // inferring it from "activeSessionId changed" races with the
+                // sessions snapshot that follows every (re)connect.
+                val created = event.obj("session")?.let { it.string("id") }
+                if (created != null && created != before) {
+                    requestMessages(created)
+                } else if (after != null && after != before) {
                     requestMessages(after)
                 }
-                // The replay buffer cannot cover the gap: pi's message list is the
-                // only source of truth, and the cursor must restart from it.
+
+                // The replay buffer no longer covers the gap: reload pi's list.
                 if (event.boolean("needsHistoryReload") == true && after != null) {
                     reducer.resetCursor(event.long("latestSeq") ?: 0L)
                     requestMessages(after)

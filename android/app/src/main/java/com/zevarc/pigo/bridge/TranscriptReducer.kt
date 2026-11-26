@@ -94,14 +94,20 @@ class TranscriptReducer {
 
     private fun applySessions(state: PiUiState, event: JsonObject): PiUiState {
         val sessions = event.array("sessions").orEmpty().mapNotNull(::parseSession)
-        val active = state.activeSessionId?.takeIf { id -> sessions.any { it.id == id } }
-            ?: sessions.firstOrNull()?.id
-        val running = sessions.firstOrNull { it.id == active }?.isAgentRunning ?: false
+        val current = state.activeSessionId
+        // Keep the current session even when this snapshot predates it (a
+        // `resume_session` reply can land after the snapshot). Falling back to
+        // "first in the list" would silently switch the user to another session.
+        val active = when {
+            current != null -> current
+            else -> sessions.firstOrNull()?.id
+        }
+        val running = sessions.firstOrNull { it.id == active }?.isAgentRunning ?: state.isAgentRunning
         return state.copy(
             sessions = sessions,
             activeSessionId = active,
-            isAgentRunning = if (active == state.activeSessionId) state.isAgentRunning else running,
-            turns = if (active == state.activeSessionId) state.turns else emptyList(),
+            isAgentRunning = running,
+            turns = state.turns,
         )
     }
 

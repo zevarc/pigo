@@ -52,6 +52,13 @@ MainActivity      两个屏幕的切换，无导航库
   参照 `pi/dist/modes/interactive/theme/system-theme.js` 与
   `pi/dist/core/export-html/template.css`。
 
+- **`sessions_snapshot` 不得改变当前会话**：`resume_session` 的回复和每次（重）连接推送的
+  快照存在竞争，若此处在“当前 id 不在列表里”时回落到 `first()`，用户会被静默切走、
+  正文被清空。只允许它在 `activeSessionId == null` 时选定初始会话。
+- **拉历史要按事件里带的 id**（`session_created.session.id`），不要靠
+  “activeSessionId 变了”推断，同一原因。
+- 错误提示用 `ErrorChip`（角落图标 + 自动消失），不要做常驻横幅。
+
 ## 与 Bridge 的契约
 
 见仓库根 `README.md` 的事件表。Bridge 侧对应实现是 `bridge/src/normalize.ts`，

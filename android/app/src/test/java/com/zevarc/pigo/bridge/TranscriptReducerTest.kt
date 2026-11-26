@@ -290,6 +290,44 @@ class TranscriptReducerTest {
     }
 
     @Test
+    fun `a late sessions snapshot must not switch the active session`() {
+        val reducer = TranscriptReducer()
+        var state = PiUiState()
+        // Connected, a session became active via resume.
+        state = reducer.reduce(
+            state,
+            Wire.parse("""{"type":"session_created","session":{"id":"new","title":"pigo","cwd":"/w"}}"""),
+        )
+        assertEquals("new", state.activeSessionId)
+
+        // A snapshot produced before the resume lands afterwards and does not
+        // list that session yet: the old code fell back to the first id.
+        state = reducer.reduce(
+            state,
+            Wire.parse("""{"type":"sessions_snapshot","sessions":[{"id":"other","title":"x","cwd":"/o"}]}"""),
+        )
+        assertEquals("new", state.activeSessionId)
+    }
+
+    @Test
+    fun `a sessions snapshot keeps the transcript`() {
+        val reducer = TranscriptReducer()
+        var state = PiUiState(activeSessionId = "s1")
+        state = reducer.reduce(
+            state,
+            Wire.parse("""{"type":"messages_snapshot","sessionId":"s1","messages":[{"role":"user","content":"hi"}]}"""),
+        )
+        assertEquals(1, state.turns.size)
+        state = reducer.reduce(
+            state,
+            Wire.parse("""{"type":"sessions_snapshot","sessions":[{"id":"s1","title":"t","cwd":"/w","isAgentRunning":true}]}"""),
+        )
+        // Refreshing the list must not blank the transcript.
+        assertEquals(1, state.turns.size)
+        assertTrue(state.isAgentRunning)
+    }
+
+    @Test
     fun `unknown event types are ignored`() {
         val state = reduce("""{"type":"brand_new_thing","sessionId":"s1","seq":1}""")
         assertNull(state.errorBanner)
