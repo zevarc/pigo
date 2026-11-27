@@ -198,6 +198,17 @@ export function normalizePiEvent(raw: Record<string, unknown>, ctx: NormalizeCon
 			};
 		}
 
+		case "queue_update":
+			// The complete pending queue: the client shows it so a message sent
+			// during a run does not look like it went nowhere.
+			return {
+				event: {
+					type: "queue_update",
+					steering: Array.isArray(raw.steering) ? raw.steering : [],
+					followUp: Array.isArray(raw.followUp) ? raw.followUp : []
+				}
+			};
+
 		case "session_info_changed":
 			return { event: { type: "session_name_changed", name: raw.name ?? null } };
 

@@ -147,6 +147,18 @@ test("confirm / input / editor keep their own fields", () => {
 	assert.equal(editor.prefill, "x");
 });
 
+test("queue_update reports the whole pending queue", () => {
+	const result = normalizePiEvent(
+		{ type: "queue_update", steering: ["do X instead"], followUp: [] },
+		context()
+	);
+	assert.deepEqual(result.event, {
+		type: "queue_update",
+		steering: ["do X instead"],
+		followUp: []
+	});
+});
+
 test("fire-and-forget extension UI records are surfaced, not dropped", () => {
 	const notify = normalizePiEvent(
 		{ type: "extension_ui_request", id: "n", method: "notify", message: "No stored results", notifyType: "warning" },
