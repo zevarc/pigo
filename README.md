@@ -71,13 +71,56 @@ JAVA_HOME="/Applications/Android Studio.app/Contents/jbr/Contents/Home" \
 | 任务 | 内容 |
 | --- | --- |
 | `bridge` | Node 22 与 26 上分别 `typecheck` + `test` + `build` |
-| `android` | 单测 + `assembleDebug`，产物 `app-debug-apk` 可在 Actions 页面直接下载 |
+| `android` | 单测 + `assembleDebug`，产物 `app-debug-apk` |
+| `android`（配了密钥时） | 额外构建**签名**的 `app-release.apk`，产物 `app-release-apk` |
 
-想拿一个可长期保存的 APK：打 tag 即可，工作流会把它挂到 GitHub Release。
+#### release 包签名
+
+**未签名的 release APK 装不上手机**，所以 CI 需要一份 keystore；keystore 本身不进仓库，
+而是通过 GitHub Secrets 注入。配置一次即可：
+
+```bash
+cd android
+keytool -genkeypair -v -keystore pigo-release.jks \
+  -alias pigo -keyalg RSA -keysize 2048 -validity 10000 \
+  -dname "CN=PiGo, O=Personal, C=CN"
+
+# 转成一行 base64，粘进 PIGO_KEYSTORE_BASE64
+base64 -i pigo-release.jks | tr -d '\n'
+```
+
+然后在仓库 Settings → Secrets and variables → Actions 里加四个 secret：
+
+| Secret | 内容 |
+| --- | --- |
+| `PIGO_KEYSTORE_BASE64` | 上面输出的 base64 串 |
+| `PIGO_KEYSTORE_PASSWORD` | keystore 密码 |
+| `PIGO_KEY_ALIAS` | `pigo` |
+| `PIGO_KEY_PASSWORD` | key 密码（通常与 keystore 相同） |
+
+**`pigo-release.jks` 务必自己留一份备份。** 丢了它，新包将无法覆盖安装旧的
+（Android 要求签名一致），只能先卸载再装，而卸载会清掉 App 设置里的地址与 token。
+
+没配 secret 也能正常构建：workflow 会跳过 release 任务，只出 debug 包。
+
+想拿一个可长期保存的 APK：打 tag 即可，工作流会把它挂到 GitHub Release
+（有签名版就附签名版，否则附 debug 包）。
 
 ```bash
 git tag v0.1.0 && git push origin v0.1.0
 # Release 里出现 pigo-v0.1.0.apk
+```
+
+本地出签名包：
+
+```bash
+cd android
+PIGO_KEYSTORE_FILE=/abs/path/pigo-release.jks \
+PIGO_KEYSTORE_PASSWORD=... PIGO_KEY_ALIAS=pigo PIGO_KEY_PASSWORD=... \
+ANDROID_HOME=$HOME/Library/Android/sdk \
+JAVA_HOME="/Applications/Android Studio.app/Contents/jbr/Contents/Home" \
+./gradlew :app:assembleRelease
+# → app/build/outputs/apk/release/app-release.apk
 ```
 
 `compileSdk = 37` 比 runner 自带的平台新，工作流里显式 `sdkmanager --install "platforms;android-37.0"`，

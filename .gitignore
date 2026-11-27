@@ -17,6 +17,11 @@ android/.kotlin/
 .idea/
 .DS_Store
 
+# Signing material must never be committed. CI reads it from GitHub Secrets.
+*.jks
+*.keystore
+android/keystore.properties
+
 # Local secrets
 bridge/data/
 *.env

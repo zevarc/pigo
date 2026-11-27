@@ -4,6 +4,26 @@ plugins {
     alias(libs.plugins.kotlin.serialization)
 }
 
+/**
+ * Release signing, driven entirely by environment variables.
+ *
+ * A release APK that is not signed cannot be installed, so CI must be able to
+ * sign without the keystore ever entering the repository. The four variables
+ * are populated from GitHub Secrets in the workflow; when they are absent
+ * (a plain local build) the release config is simply not applied and
+ * `assembleRelease` still works, producing an unsigned APK.
+ */
+val releaseStoreFile: String? = System.getenv("PIGO_KEYSTORE_FILE")
+val releaseStorePassword: String? = System.getenv("PIGO_KEYSTORE_PASSWORD")
+val releaseKeyAlias: String? = System.getenv("PIGO_KEY_ALIAS")
+val releaseKeyPassword: String? = System.getenv("PIGO_KEY_PASSWORD")
+
+val hasReleaseSigning =
+    !releaseStoreFile.isNullOrBlank() &&
+        !releaseStorePassword.isNullOrBlank() &&
+        !releaseKeyAlias.isNullOrBlank() &&
+        !releaseKeyPassword.isNullOrBlank()
+
 android {
     namespace = "com.zevarc.pigo"
     compileSdk {
@@ -24,6 +44,14 @@ android {
         release {
             optimization {
                 enable = false
+            }
+            if (hasReleaseSigning) {
+                signingConfig = signingConfigs.create("release") {
+                    storeFile = file(releaseStoreFile!!)
+                    storePassword = releaseStorePassword
+                    keyAlias = releaseKeyAlias
+                    keyPassword = releaseKeyPassword
+                }
             }
         }
     }
