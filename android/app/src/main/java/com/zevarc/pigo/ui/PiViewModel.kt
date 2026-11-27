@@ -91,7 +91,7 @@ class PiViewModel(application: Application) : AndroidViewModel(application) {
         _state.update {
             it.copy(turns = it.turns + userTurn, inputText = "", errorBanner = null)
         }
-        send(
+        val delivered = client.send(
             Wire.obj(
                 "type" to JsonPrimitive("prompt"),
                 "sessionId" to JsonPrimitive(sessionId),
@@ -99,6 +99,19 @@ class PiViewModel(application: Application) : AndroidViewModel(application) {
                 "id" to JsonPrimitive(userTurn.id),
             ).toString(),
         )
+
+        // The optimistic turn is only honest if the frame actually left the
+        // socket. Leaving it in place on failure shows the message as sent while
+        // pi never saw it, so undo it and keep the text for a retry.
+        if (!delivered) {
+            _state.update {
+                it.copy(
+                    turns = it.turns.filterNot { turn -> turn.id == userTurn.id },
+                    inputText = text,
+                    errorBanner = "未连接，消息未发送",
+                )
+            }
+        }
     }
 
     /** Drops everything still queued for the running session. */
@@ -253,12 +266,28 @@ class PiViewModel(application: Application) : AndroidViewModel(application) {
 
     // ------------------------------------------------------------------- plumbing
 
+    /**
+     * Connection bookkeeping.
+     *
+     * The refresh itself happens in [syncActiveSession] via the client's
+     * `onConnected` callback. Doing it here as well meant every reconnect sent
+     * `list_sessions`, `list_workspaces` and `list_pi_sessions` twice — and this
+     * path dropped the resume query, so a search could silently reset.
+     */
     private fun observeConnection() {
         viewModelScope.launch {
             client.status.collect { status ->
-                if (status == ConnectionStatus.CONNECTED) {
-                    refreshSessions()
-                    loadResumeEntries()
+                // Reconnecting must not leave stale flags on screen: a run that
+                // was streaming when the socket dropped will never settle now.
+                if (status != ConnectionStatus.CONNECTED) {
+                    _state.update { current ->
+                        current.copy(
+                            isAgentRunning = false,
+                            turns = current.turns.map {
+                                if (it.isStreaming) it.copy(isStreaming = false) else it
+                            },
+                        )
+                    }
                 }
             }
         }

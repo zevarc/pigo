@@ -62,11 +62,15 @@ import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
@@ -115,9 +119,23 @@ fun PiScreen(
     }
     val listState = rememberLazyListState()
 
-    // Follow the stream while text arrives.
-    LaunchedEffect(state.turns.size, state.turns.lastOrNull()?.content?.length) {
-        if (state.turns.isNotEmpty()) listState.animateScrollToItem(state.turns.lastIndex)
+    // Follow the stream only when the user is already at the bottom.
+    //
+    // Scrolling unconditionally meant any streaming delta yanked the view back
+    // down while the user was reading history above — the transcript became
+    // impossible to scroll through during a run. Now the auto-follow stops as
+    // soon as they scroll away and resumes when they return.
+    val atBottom by remember {
+        derivedStateOf {
+            val info = listState.layoutInfo
+            val last = info.visibleItemsInfo.lastOrNull() ?: return@derivedStateOf true
+            last.index >= info.totalItemsCount - 1
+        }
+    }
+    LaunchedEffect(state.turns.size, state.turns.lastOrNull()?.content?.length, atBottom) {
+        if (atBottom && state.turns.isNotEmpty()) {
+            listState.animateScrollToItem(state.turns.lastIndex)
+        }
     }
 
     ModalNavigationDrawer(
@@ -389,16 +407,27 @@ private fun TurnRow(
  *
  * Until tapped this is a cheap placeholder: the bridge keeps base64 out of the
  * message list because screenshots dominate a long session's size. Tapping asks
- * for that single image; the bytes then decode in place.
+ * for that single image; the bytes then decode off the main thread.
+ *
+ * Decoding used to run inline during composition, so a 178 KB JPEG froze the UI
+ * on every recomposition. It now runs in a coroutine keyed on the payload, and
+ * the result is memory-capped by [decodeImage]: a long session can hold dozens
+ * of these, and full-resolution screenshots are far larger than a phone screen.
  */
 @Composable
 private fun ImageCard(image: ImageBlock, onLoad: () -> Unit) {
     val scheme = MaterialTheme.colorScheme
-    val loaded = image.payload?.let { remember(image.imageId, it) { decodeBase64Image(it) } }
+    val payload = image.payload
+
+    // Only the payload drives decoding; keying on the whole block would rerun on
+    // every unrelated state change (e.g. a streaming delta).
+    val bitmap by produceState<Bitmap?>(initialValue = null, payload) {
+        value = payload?.let { withContext(Dispatchers.IO) { decodeImage(it) } }
+    }
 
     when {
-        loaded != null -> Image(
-            bitmap = loaded.asImageBitmap(),
+        bitmap != null -> Image(
+            bitmap = bitmap!!.asImageBitmap(),
             contentDescription = "图片",
             contentScale = ContentScale.FillWidth,
             modifier = Modifier
@@ -427,6 +456,9 @@ private fun ImageCard(image: ImageBlock, onLoad: () -> Unit) {
                     text = when {
                         image.isLoading -> "正在加载图片…"
                         image.failed -> "图片加载失败，点击重试"
+                        // Payload arrived but would not decode: say so instead of
+                        // showing a tap target that cannot ever succeed.
+                        payload != null -> "图片无法显示"
                         else -> "图片 ${formatBytes(image.bytes)} · 点击加载"
                     },
                     style = MaterialTheme.typography.bodySmall,
@@ -443,10 +475,34 @@ private fun formatBytes(bytes: Long): String = when {
     else -> "$bytes B"
 }
 
-/** Base64 → Bitmap, returning null instead of throwing on a malformed payload. */
-private fun decodeBase64Image(base64: String): Bitmap? = runCatching {
+/**
+ * Largest decode we accept, in pixels on the long edge.
+ *
+ * Screenshots are often 2–3k pixels wide; a phone draws ~1080. Decoding at full
+ * resolution costs several MB per bitmap and buys nothing visible.
+ */
+private const val MAX_IMAGE_EDGE = 1600
+
+/**
+ * Base64 → downsampled Bitmap, returning null on any malformed input.
+ *
+ * `inJustDecodeBounds` costs almost nothing and lets the second pass allocate
+ * only what is needed, which is the difference between one 12 MB ARGB bitmap
+ * and one under 2 MB.
+ */
+private fun decodeImage(base64: String): Bitmap? = runCatching {
     val bytes = Base64.decode(base64, Base64.DEFAULT)
-    BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
+
+    val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+    BitmapFactory.decodeByteArray(bytes, 0, bytes.size, bounds)
+    val longest = maxOf(bounds.outWidth, bounds.outHeight)
+    if (longest <= 0) return@runCatching null
+
+    var sample = 1
+    while (longest / sample > MAX_IMAGE_EDGE) sample *= 2
+
+    val options = BitmapFactory.Options().apply { inSampleSize = sample }
+    BitmapFactory.decodeByteArray(bytes, 0, bytes.size, options)
 }.getOrNull()
 
 @Composable

@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- API 31+ equivalent of backup_rules.xml; see that file for why the token is
+     excluded from cloud backup. -->
+<data-extraction-rules>
+    <cloud-backup>
+        <exclude domain="sharedpref" path="pigo.settings.xml" />
+    </cloud-backup>
+    <device-transfer>
+        <exclude domain="sharedpref" path="pigo.settings.xml" />
+    </device-transfer>
+</data-extraction-rules>

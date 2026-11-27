@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Android auto-backup copies SharedPreferences into the user's cloud backup.
+  `pigo.settings` holds the bridge token, which is the only credential in the
+  app: backing it up hands it to whatever account the phone is signed into, and
+  restores it onto a different device.
+
+  The rest of the app is stateless (all transcripts live in pi's store on the
+  bridge), so there is nothing worth backing up — exclude everything.
+-->
+<full-backup-content>
+    <exclude domain="sharedpref" path="pigo.settings.xml" />
+</full-backup-content>
