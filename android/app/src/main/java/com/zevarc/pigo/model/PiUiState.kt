@@ -33,6 +33,9 @@ data class PiUiState(
     val errorBanner: String? = null,
     val notices: List<String> = emptyList(),
     val uiRequest: UiRequest? = null,
+    /** Steering messages pi accepted but has not delivered yet. */
+    val queuedSteering: List<String> = emptyList(),
+    val queuedFollowUp: List<String> = emptyList(),
     val commands: List<CommandInfo> = emptyList(),
     val resumeEntries: List<ResumeEntry> = emptyList(),
     val resumeQuery: String = "",
@@ -76,10 +79,27 @@ data class ChatTurn(
     val content: String,
     val thinking: String = "",
     val toolCalls: List<ToolCallItem> = emptyList(),
+    val images: List<ImageBlock> = emptyList(),
     val isStreaming: Boolean = false,
 ) {
     enum class Role { USER, ASSISTANT, NOTICE }
 }
+
+/**
+ * An image attached to a message.
+ *
+ * The bridge strips base64 out of the transcript (images were 79% of an 8.6 MB
+ * session) and sends this placeholder instead. `payload` stays null until the
+ * user taps the card, at which point `get_image` fills it in.
+ */
+data class ImageBlock(
+    val imageId: String,
+    val mimeType: String,
+    val bytes: Long,
+    val payload: String? = null,
+    val isLoading: Boolean = false,
+    val failed: Boolean = false,
+)
 
 data class ToolCallItem(
     val id: String,

@@ -2,6 +2,7 @@ package com.zevarc.pigo.bridge
 
 import com.zevarc.pigo.model.ChatTurn
 import com.zevarc.pigo.model.CommandInfo
+import com.zevarc.pigo.model.ImageBlock
 import com.zevarc.pigo.model.UiRequest
 import com.zevarc.pigo.model.PiUiState
 import com.zevarc.pigo.model.ResumeEntry
@@ -72,6 +73,10 @@ class TranscriptReducer {
             "tool_card", "tool_start" -> applyToolStart(state, event)
             "tool_progress" -> applyToolProgress(state, event)
             "tool_end" -> applyToolEnd(state, event)
+            "queue_update" -> state.copy(
+                queuedSteering = textList(event, "steering"),
+                queuedFollowUp = textList(event, "followUp"),
+            )
             "ui_request" -> applyUiRequest(state, event)
             "commands_snapshot" -> applyCommands(state, event)
             "pi_sessions_snapshot" -> applyResumeEntries(state, event)
@@ -144,21 +149,74 @@ class TranscriptReducer {
         val turns = mutableListOf<ChatTurn>()
         raw.forEachIndexed { index, element ->
             val message = element as? JsonObject ?: return@forEachIndexed
+            val images = parseImages(message)
             when (message.string("role")) {
                 "user" -> {
                     val text = messageText(message)
-                    if (text.isNotBlank()) turns += ChatTurn("snap-user-$index", ChatTurn.Role.USER, text)
+                    if (text.isNotBlank() || images.isNotEmpty()) {
+                        turns += ChatTurn("snap-user-$index", ChatTurn.Role.USER, text, images = images)
+                    }
                 }
                 "assistant" -> turns += ChatTurn(
                     message.string("id") ?: "snap-assistant-$index",
                     ChatTurn.Role.ASSISTANT,
                     messageText(message),
+                    images = images,
                 )
                 else -> Unit
             }
         }
         return state.copy(turns = turns)
     }
+
+    /**
+     * Image placeholders from a message.
+     *
+     * The bridge replaces each `image` block with `{imageId, mimeType, bytes,
+     * omitted}`; anything that still carries inline `data` came from a path that
+     * did not go through the bridge trimmer, and is kept as an already-loaded
+     * block so both shapes render.
+     */
+    private fun parseImages(message: JsonObject): List<ImageBlock> {
+        val blocks = message["content"]?.let { runCatching { it.jsonArray }.getOrNull() } ?: return emptyList()
+        return blocks.mapNotNull { block ->
+            val obj = block as? JsonObject ?: return@mapNotNull null
+            if (obj.string("type") != "image") return@mapNotNull null
+            val imageId = obj.string("imageId") ?: return@mapNotNull null
+            ImageBlock(
+                imageId = imageId,
+                mimeType = obj.string("mimeType") ?: "image/png",
+                bytes = obj.long("bytes") ?: 0L,
+                payload = obj.string("data"),
+            )
+        }
+    }
+
+    /** Fills in one image once its payload arrives from `get_image`. */
+    fun applyImageData(state: PiUiState, event: JsonObject): PiUiState {
+        val imageId = event.string("imageId") ?: return state
+        val data = event.string("data") ?: return state
+        return updateImage(state, imageId) { it.copy(payload = data, isLoading = false, failed = false) }
+    }
+
+    /** Marks an image request as in flight or failed, so the card can react. */
+    fun applyImageState(state: PiUiState, imageId: String, loading: Boolean, failed: Boolean): PiUiState =
+        updateImage(state, imageId) { it.copy(isLoading = loading, failed = failed) }
+
+    private fun updateImage(
+        state: PiUiState,
+        imageId: String,
+        transform: (ImageBlock) -> ImageBlock,
+    ): PiUiState = state.copy(
+        turns = state.turns.map { turn ->
+            if (turn.images.none { it.imageId == imageId }) turn
+            else turn.copy(
+                images = turn.images.map {
+                    if (it.imageId == imageId) transform(it) else it
+                },
+            )
+        },
+    )
 
     private fun messageText(message: JsonObject): String {
         message["content"]?.let { content ->
@@ -295,6 +353,9 @@ class TranscriptReducer {
             )
         }
     }
+
+    private fun textList(event: JsonObject, key: String): List<String> =
+        event.array(key).orEmpty().mapNotNull { it.asString() }.filter { it.isNotBlank() }
 
     private fun applyUiRequest(state: PiUiState, event: JsonObject): PiUiState {
         val requestId = event.string("requestId") ?: return state

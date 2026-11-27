@@ -101,6 +101,19 @@ class PiViewModel(application: Application) : AndroidViewModel(application) {
         )
     }
 
+    /** Drops everything still queued for the running session. */
+    fun clearQueue() {
+        val sessionId = _state.value.activeSessionId ?: return
+        _state.update { it.copy(queuedSteering = emptyList(), queuedFollowUp = emptyList()) }
+        send(
+            Wire.obj(
+                "type" to JsonPrimitive("abort"),
+                "sessionId" to JsonPrimitive(sessionId),
+                "clearQueue" to JsonPrimitive(true),
+            ).toString(),
+        )
+    }
+
     fun abort() {
         val sessionId = _state.value.activeSessionId ?: return
         send(Wire.obj("type" to JsonPrimitive("abort"), "sessionId" to JsonPrimitive(sessionId)).toString())
@@ -210,6 +223,32 @@ class PiViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    /**
+     * Loads one image's payload on demand.
+     *
+     * The transcript ships image placeholders only, so a long session opens fast
+     * regardless of how many screenshots it contains. A tap is the one moment the
+     * user has told us the bytes are worth sending.
+     */
+    fun loadImage(imageId: String) {
+        val sessionId = _state.value.activeSessionId ?: return
+        val block = _state.value.turns
+            .flatMap { it.images }
+            .firstOrNull { it.imageId == imageId }
+
+        // Already loaded, or already asking: tapping again must not re-request.
+        if (block == null || block.payload != null || block.isLoading) return
+
+        _state.update { reducer.applyImageState(it, imageId, loading = true, failed = false) }
+        send(
+            Wire.obj(
+                "type" to JsonPrimitive("get_image"),
+                "sessionId" to JsonPrimitive(sessionId),
+                "imageId" to JsonPrimitive(imageId),
+            ).toString(),
+        )
+    }
+
     fun dismissError() = _state.update { it.copy(errorBanner = null) }
 
     // ------------------------------------------------------------------- plumbing
@@ -232,6 +271,33 @@ class PiViewModel(application: Application) : AndroidViewModel(application) {
                 val before = _state.value.activeSessionId
                 _state.update { reducer.reduce(it, event) }
                 val after = _state.value.activeSessionId
+
+                // Image payloads arrive outside the seq stream (they are not
+                // transcript events), so they bypass the reducer's dedupe and are
+                // merged into the matching placeholder here.
+                when (event.string("type")) {
+                    "image_data" -> {
+                        _state.update { reducer.applyImageData(it, event) }
+                        return@collect
+                    }
+                    "error" -> {
+                        // A failed get_image must clear its spinner, or the card
+                        // sits on "loading" forever.
+                        val message = event.string("message").orEmpty()
+                        if (message.contains("image", ignoreCase = true)) {
+                            val pending = _state.value.turns
+                                .flatMap { it.images }
+                                .firstOrNull { it.isLoading }?.imageId
+                            if (pending != null) {
+                                _state.update {
+                                    reducer.applyImageState(it, pending, loading = false, failed = true)
+                                }
+                            }
+                            _state.update { it.copy(errorBanner = message) }
+                            return@collect
+                        }
+                    }
+                }
 
                 // A session became active: load its transcript. `session_created`
                 // carries the id explicitly, which is the only reliable signal —

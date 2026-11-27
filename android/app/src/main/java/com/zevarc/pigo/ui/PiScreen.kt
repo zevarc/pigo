@@ -23,6 +23,13 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.Image
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.layout.ContentScale
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
+import android.util.Base64
+import com.zevarc.pigo.model.ImageBlock
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -33,6 +40,7 @@ import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material.icons.filled.Menu
+import androidx.compose.material.icons.filled.Queue
 import androidx.compose.material3.Badge
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -50,6 +58,7 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.rememberDrawerState
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -156,6 +165,11 @@ fun PiScreen(
                     )
                 },
                 actions = {
+                    // Running work lives in the app bar, not as a bar over the
+                    // transcript: it doubles as the abort control.
+                    if (state.isAgentRunning) {
+                        RunningSpinner(onAbort = viewModel::abort)
+                    }
                     // Connection is a permanent, glanceable indicator — not a
                     // dismissible message and not a duplicate of the title.
                     ConnectionIndicator(
@@ -166,6 +180,13 @@ fun PiScreen(
             )
         },
         bottomBar = {
+            if (state.queuedSteering.isNotEmpty() || state.queuedFollowUp.isNotEmpty()) {
+                QueuedBanner(
+                    steering = state.queuedSteering,
+                    followUp = state.queuedFollowUp,
+                    onClear = viewModel::clearQueue,
+                )
+            }
             if (state.inputText.startsWith("/") && state.commands.isNotEmpty()) {
                 CommandPalette(
                     commands = state.commands,
@@ -177,7 +198,6 @@ fun PiScreen(
                 state = state,
                 onInput = viewModel::onInputChange,
                 onSend = viewModel::sendPrompt,
-                onAbort = viewModel::abort,
             )
         },
     ) { padding ->
@@ -191,7 +211,7 @@ fun PiScreen(
                     verticalArrangement = Arrangement.spacedBy(10.dp),
                 ) {
                     items(state.turns, key = { it.id }) { turn ->
-                        TurnRow(turn, viewModel::toggleTool)
+                        TurnRow(turn, viewModel::toggleTool, viewModel::loadImage)
                     }
                     if (state.extensionStatus.isNotEmpty()) {
                         item(key = "ext-status") {
@@ -302,7 +322,11 @@ private fun PiMarkdown(content: String, modifier: Modifier = Modifier) {
 }
 
 @Composable
-private fun TurnRow(turn: ChatTurn, onToggleTool: (String) -> Unit) {
+private fun TurnRow(
+    turn: ChatTurn,
+    onToggleTool: (String) -> Unit,
+    onLoadImage: (String) -> Unit,
+) {
     val scheme = MaterialTheme.colorScheme
     val shape = RoundedCornerShape(12.dp)
     Column(modifier = Modifier.fillMaxWidth().widthIn(max = 720.dp)) {
@@ -312,12 +336,19 @@ private fun TurnRow(turn: ChatTurn, onToggleTool: (String) -> Unit) {
                 shape = shape,
                 modifier = Modifier.fillMaxWidth(),
             ) {
-                PiMarkdown(
-                    content = turn.content,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 10.dp, vertical = 6.dp),
-                )
+                Column {
+                    turn.images.forEach { image ->
+                        ImageCard(image, onLoad = { onLoadImage(image.imageId) })
+                    }
+                    if (turn.content.isNotEmpty()) {
+                        PiMarkdown(
+                            content = turn.content,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 10.dp, vertical = 6.dp),
+                        )
+                    }
+                }
             }
 
             ChatTurn.Role.NOTICE -> Text(
@@ -342,6 +373,9 @@ private fun TurnRow(turn: ChatTurn, onToggleTool: (String) -> Unit) {
                         modifier = Modifier.fillMaxWidth(),
                     )
                 }
+                turn.images.forEach { image ->
+                    ImageCard(image, onLoad = { onLoadImage(image.imageId) })
+                }
                 turn.toolCalls.forEach { item ->
                     ToolCard(item, onToggle = { onToggleTool(item.id) })
                 }
@@ -350,12 +384,76 @@ private fun TurnRow(turn: ChatTurn, onToggleTool: (String) -> Unit) {
     }
 }
 
+/**
+ * One image in the transcript.
+ *
+ * Until tapped this is a cheap placeholder: the bridge keeps base64 out of the
+ * message list because screenshots dominate a long session's size. Tapping asks
+ * for that single image; the bytes then decode in place.
+ */
+@Composable
+private fun ImageCard(image: ImageBlock, onLoad: () -> Unit) {
+    val scheme = MaterialTheme.colorScheme
+    val loaded = image.payload?.let { remember(image.imageId, it) { decodeBase64Image(it) } }
+
+    when {
+        loaded != null -> Image(
+            bitmap = loaded.asImageBitmap(),
+            contentDescription = "图片",
+            contentScale = ContentScale.FillWidth,
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(8.dp))
+                .padding(vertical = 4.dp),
+        )
+
+        else -> Surface(
+            color = scheme.surfaceVariant.copy(alpha = 0.6f),
+            shape = RoundedCornerShape(8.dp),
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(vertical = 4.dp)
+                .clickable(enabled = !image.isLoading, onClick = onLoad),
+        ) {
+            Row(
+                modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                if (image.isLoading) {
+                    CircularProgressIndicator(modifier = Modifier.size(14.dp), strokeWidth = 2.dp)
+                }
+                Text(
+                    text = when {
+                        image.isLoading -> "正在加载图片…"
+                        image.failed -> "图片加载失败，点击重试"
+                        else -> "图片 ${formatBytes(image.bytes)} · 点击加载"
+                    },
+                    style = MaterialTheme.typography.bodySmall,
+                    color = if (image.failed) scheme.error else scheme.onSurfaceVariant,
+                )
+            }
+        }
+    }
+}
+
+private fun formatBytes(bytes: Long): String = when {
+    bytes >= 1024 * 1024 -> "%.1f MB".format(bytes / 1024.0 / 1024.0)
+    bytes >= 1024 -> "${bytes / 1024} KB"
+    else -> "$bytes B"
+}
+
+/** Base64 → Bitmap, returning null instead of throwing on a malformed payload. */
+private fun decodeBase64Image(base64: String): Bitmap? = runCatching {
+    val bytes = Base64.decode(base64, Base64.DEFAULT)
+    BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
+}.getOrNull()
+
 @Composable
 private fun Composer(
     state: PiUiState,
     onInput: (String) -> Unit,
     onSend: () -> Unit,
-    onAbort: () -> Unit,
 ) {
     Surface(tonalElevation = 3.dp) {
         Column(modifier = Modifier.navigationBarsPadding().imePadding().padding(12.dp)) {
@@ -368,29 +466,15 @@ private fun Composer(
                     maxLines = 5,
                     shape = RoundedCornerShape(12.dp),
                 )
-                if (state.isAgentRunning) {
-                    FilledIconButton(
-                        onClick = onAbort,
-                        modifier = Modifier.size(48.dp),
-                        colors = IconButtonDefaults.filledIconButtonColors(
-                            containerColor = MaterialTheme.colorScheme.errorContainer,
-                            contentColor = MaterialTheme.colorScheme.error,
-                        ),
-                    ) {
-                        Icon(Icons.Filled.Stop, contentDescription = "中止")
-                    }
-                } else {
-                    FilledIconButton(
-                        onClick = onSend,
-                        enabled = state.inputText.isNotBlank() && state.activeSessionId != null,
-                        modifier = Modifier.size(48.dp),
-                    ) {
-                        Icon(Icons.AutoMirrored.Filled.Send, contentDescription = "发送")
-                    }
+                // Always sendable: while a run is active pi queues the message
+                // as steering input. Aborting lives in the app bar.
+                FilledIconButton(
+                    onClick = onSend,
+                    enabled = state.inputText.isNotBlank() && state.activeSessionId != null,
+                    modifier = Modifier.size(48.dp),
+                ) {
+                    Icon(Icons.AutoMirrored.Filled.Send, contentDescription = "发送")
                 }
-            }
-            if (state.isAgentRunning) {
-                LinearProgressIndicator(modifier = Modifier.fillMaxWidth().padding(top = 8.dp))
             }
         }
     }
@@ -479,6 +563,69 @@ private fun ErrorChip(message: String, onDismiss: () -> Unit, modifier: Modifier
                     modifier = Modifier.widthIn(max = 260.dp),
                 )
             }
+        }
+    }
+}
+
+/**
+ * Shows what the user has queued into a running session.
+ *
+ * Sending during a run used to look like a no-op: pi accepted the message as
+ * steering input but nothing on screen changed until the current turn ended.
+ */
+@Composable
+private fun QueuedBanner(steering: List<String>, followUp: List<String>, onClear: () -> Unit) {
+    val scheme = MaterialTheme.colorScheme
+    Surface(color = scheme.tertiaryContainer) {
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 6.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Icon(
+                Icons.Filled.Queue,
+                contentDescription = null,
+                tint = scheme.onTertiaryContainer,
+                modifier = Modifier.padding(end = 8.dp),
+            )
+            Text(
+                text = buildString {
+                    append("已排队 ${steering.size + followUp.size} 条")
+                    steering.firstOrNull()?.let { append(" · 下一轮执行：").append(it.take(40)) }
+                },
+                style = MaterialTheme.typography.bodySmall,
+                color = scheme.onTertiaryContainer,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.weight(1f),
+            )
+            TextButton(onClick = onClear) { Text("清空") }
+        }
+    }
+}
+
+/**
+ * "A run is in progress" spinner that is also the stop button.
+ *
+ * The composer's send button stays a send button while a run is active (pi
+ * queues such messages as steering input), so stopping needs its own control;
+ * putting it here keeps the transcript free of a full-width progress bar.
+ */
+@Composable
+private fun RunningSpinner(onAbort: () -> Unit) {
+    val scheme = MaterialTheme.colorScheme
+    IconButton(onClick = onAbort) {
+        Box(contentAlignment = Alignment.Center) {
+            CircularProgressIndicator(
+                modifier = Modifier.size(22.dp),
+                strokeWidth = 2.dp,
+                color = scheme.primary,
+            )
+            Icon(
+                Icons.Filled.Stop,
+                contentDescription = "中止当前任务",
+                tint = scheme.error,
+                modifier = Modifier.size(12.dp),
+            )
         }
     }
 }

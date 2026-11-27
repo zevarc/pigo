@@ -187,6 +187,74 @@ class TranscriptReducerTest {
     }
 
     @Test
+    fun `long text is never clipped`() {
+        // The bridge used to cut text at 4000 chars while the real payload weight
+        // was images; the reducer must pass whatever it is given through intact.
+        val long = "x".repeat(20_000)
+        val state = reduce(
+            """{"type":"messages_snapshot","sessionId":"s1","messages":[
+                 {"role":"assistant","id":"a1","content":[{"type":"text","text":"$long"}]}
+               ]}""",
+        )
+        assertEquals(long, state.turns.single().content)
+    }
+
+    @Test
+    fun `image placeholders survive the snapshot and keep their size`() {
+        val state = reduce(
+            """{"type":"messages_snapshot","sessionId":"s1","messages":[
+                 {"role":"user","content":[
+                   {"type":"text","text":"look"},
+                   {"type":"image","imageId":"3:0","mimeType":"image/jpeg","bytes":96355,"omitted":true}
+                 ]}
+               ]}""",
+        )
+        val image = state.turns.single().images.single()
+        assertEquals("3:0", image.imageId)
+        assertEquals("image/jpeg", image.mimeType)
+        assertEquals(96_355L, image.bytes)
+        // Not fetched yet: the card must render as a tap target, not as a bitmap.
+        assertNull(image.payload)
+        assertFalse(image.isLoading)
+    }
+
+    @Test
+    fun `an image-only message is not dropped`() {
+        // The old reducer keyed user turns on non-blank text, so a pasted
+        // screenshot with no caption vanished from the transcript entirely.
+        val state = reduce(
+            """{"type":"messages_snapshot","sessionId":"s1","messages":[
+                 {"role":"user","content":[
+                   {"type":"image","imageId":"0:0","mimeType":"image/png","bytes":100,"omitted":true}
+                 ]}
+               ]}""",
+        )
+        assertEquals(1, state.turns.size)
+        assertEquals(1, state.turns.single().images.size)
+    }
+
+    @Test
+    fun `image data fills the matching placeholder only`() {
+        val reducer = TranscriptReducer()
+        var state = reducer.reduce(
+            PiUiState(activeSessionId = "s1"),
+            Wire.parse(
+                """{"type":"messages_snapshot","sessionId":"s1","messages":[
+                     {"role":"user","content":[{"type":"image","imageId":"0:0","mimeType":"image/png","bytes":1,"omitted":true}]},
+                     {"role":"user","content":[{"type":"image","imageId":"1:0","mimeType":"image/png","bytes":1,"omitted":true}]}
+                   ]}""",
+            ),
+        )
+        state = reducer.applyImageState(state, "1:0", loading = true, failed = false)
+        state = reducer.applyImageData(state, Wire.parse("""{"type":"image_data","imageId":"1:0","data":"QUJD"}"""))
+
+        val images = state.turns.flatMap { it.images }
+        assertNull(images.first { it.imageId == "0:0" }.payload)
+        assertEquals("QUJD", images.first { it.imageId == "1:0" }.payload)
+        assertFalse(images.first { it.imageId == "1:0" }.isLoading)
+    }
+
+    @Test
     fun `cursor resets when switching sessions`() {
         val reducer = TranscriptReducer()
         var state = PiUiState(activeSessionId = "s1")
@@ -325,6 +393,25 @@ class TranscriptReducerTest {
         // Refreshing the list must not blank the transcript.
         assertEquals(1, state.turns.size)
         assertTrue(state.isAgentRunning)
+    }
+
+    @Test
+    fun `queue update exposes what is waiting to run`() {
+        val state = reduce(
+            """{"type":"queue_update","sessionId":"s1","steering":["do X instead"],"followUp":["then Y"]}""",
+        )
+        assertEquals(listOf("do X instead"), state.queuedSteering)
+        assertEquals(listOf("then Y"), state.queuedFollowUp)
+    }
+
+    @Test
+    fun `an empty queue update clears the banner`() {
+        val state = reduce(
+            """{"type":"queue_update","sessionId":"s1","steering":["a"],"followUp":[]}""",
+            """{"type":"queue_update","sessionId":"s1","steering":[],"followUp":[]}""",
+        )
+        assertTrue(state.queuedSteering.isEmpty())
+        assertTrue(state.queuedFollowUp.isEmpty())
     }
 
     @Test
