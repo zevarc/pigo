@@ -64,19 +64,22 @@ jobs:
           distribution: temurin
           java-version: "17"
 
-      - uses: android-actions/setup-android@v3
-        with:
-          # setup-android ships a pinned cmdline-tools; accepting licenses here
-          # keeps the install step non-interactive.
-          log-accepted-android-sdk-licenses: false
-
+      # The runner image ships a complete Android SDK, and setup-android@v3
+      # fails on it: the action insists on installing the `tools` package, which
+      # Google has since removed from the repository. Only the platform matching
+      # compileSdk 37 is missing, so that is all we install.
       - name: Install SDK platform 37
+        env:
+          ANDROID_HOME: ${{ env.ANDROID_SDK_ROOT }}
         run: |
-          # compileSdk is 37, which is newer than the platform bundled with the
-          # runner image. Install it explicitly instead of relying on whatever
-          # happens to be preinstalled.
-          sdkmanager --install "platforms;android-37.0" "build-tools;36.0.0"
-          sdkmanager --licenses <<< "y" > /dev/null || true
+          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses > /dev/null 2>&1 || true
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" \
+            --install "platforms;android-37.0" "build-tools;36.0.0"
+
+      - name: Show SDK state
+        run: |
+          ls "$ANDROID_SDK_ROOT/platforms"
+          echo "ANDROID_HOME=$ANDROID_SDK_ROOT"
 
       - uses: gradle/actions/setup-gradle@v4
 
