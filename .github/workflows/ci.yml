@@ -1,0 +1,141 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+  workflow_dispatch:
+
+# A newer push to the same branch makes the previous run pointless.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  bridge:
+    name: bridge (node ${{ matrix.node }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # `engines` says >=22; 26 is what development happens on, so both ends of
+        # the supported range are checked rather than just the minimum.
+        node: ["22", "26"]
+    defaults:
+      run:
+        working-directory: bridge
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+          cache: npm
+          cache-dependency-path: bridge/package-lock.json
+
+      - run: npm ci
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Test
+        run: npm test
+
+      - name: Build
+        run: npm run build
+
+  android:
+    name: android (unit tests + debug apk)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: android
+    steps:
+      - uses: actions/checkout@v4
+
+      # JDK 17 is what compileOptions/jvmTarget pin. The runner's default JDK
+      # changes over time, so this is stated rather than assumed.
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - uses: android-actions/setup-android@v3
+        with:
+          # setup-android ships a pinned cmdline-tools; accepting licenses here
+          # keeps the install step non-interactive.
+          log-accepted-android-sdk-licenses: false
+
+      - name: Install SDK platform 37
+        run: |
+          # compileSdk is 37, which is newer than the platform bundled with the
+          # runner image. Install it explicitly instead of relying on whatever
+          # happens to be preinstalled.
+          sdkmanager --install "platforms;android-37.0" "build-tools;36.0.0"
+          sdkmanager --licenses <<< "y" > /dev/null || true
+
+      - uses: gradle/actions/setup-gradle@v4
+
+      - name: Cache Gradle
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: gradle-${{ runner.os }}-${{ hashFiles('android/gradle/wrapper/gradle-wrapper.properties', 'android/gradle/libs.versions.toml', 'android/**/*.gradle.kts') }}
+          restore-keys: gradle-${{ runner.os }}-
+
+      - name: Unit tests
+        run: ./gradlew :app:testDebugUnitTest --no-daemon --stacktrace
+
+      - name: Assemble debug APK
+        run: ./gradlew :app:assembleDebug --no-daemon --stacktrace
+
+      - name: Publish test report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-test-report
+          path: android/app/build/reports/tests/testDebugUnitTest
+          if-no-files-found: ignore
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: app-debug-apk
+          path: android/app/build/outputs/apk/debug/*.apk
+          if-no-files-found: error
+
+  release:
+    name: attach APK to the release
+    # Only on a version tag: push-to-main runs produce an artifact for testing,
+    # a tag produces something you can hand to a phone permanently.
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [bridge, android]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: app-debug-apk
+          path: dist
+
+      - name: Rename APK after the tag
+        run: |
+          tag="${GITHUB_REF_NAME}"
+          for f in dist/*.apk; do
+            mv "$f" "dist/pigo-${tag}.apk"
+          done
+          ls -l dist
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*.apk
+          generate_release_notes: true
