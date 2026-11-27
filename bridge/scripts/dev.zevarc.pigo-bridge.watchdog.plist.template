@@ -1,0 +1,47 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Template: bridge/scripts/install-launchd.sh fills in the paths and installs
+  this to ~/Library/LaunchAgents.
+
+  A separate job on purpose. The bridge cannot supervise itself after being
+  booted out of the launchd domain, and pi children run with the same UID so
+  they can always reach the switch. Supervision therefore has to live outside
+  the tree it supervises.
+-->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>dev.zevarc.pigo-bridge.watchdog</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>__BRIDGE_HOME__/scripts/watchdog.sh</string>
+    </array>
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>BRIDGE_HOME</key>
+        <string>__BRIDGE_HOME__</string>
+        <key>HOME</key>
+        <string>__HOME__</string>
+        <key>PATH</key>
+        <string>__PATH__</string>
+    </dict>
+    <key>WorkingDirectory</key>
+    <string>__BRIDGE_HOME__</string>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>StartInterval</key>
+    <integer>60</integer>
+    <!-- Supervision only: never restart this job faster than once a minute. -->
+    <key>ThrottleInterval</key>
+    <integer>60</integer>
+    <key>LaunchOnlyOnce</key>
+    <false/>
+    <key>StandardOutPath</key>
+    <string>__BRIDGE_HOME__/data/watchdog.log</string>
+    <key>StandardErrorPath</key>
+    <string>__BRIDGE_HOME__/data/watchdog.log</string>
+    <key>ProcessType</key>
+    <string>Background</string>
+</dict>
+</plist>

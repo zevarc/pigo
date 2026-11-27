@@ -50,11 +50,27 @@ server.ts         HTTP/WS 入口、Bearer/Query 鉴权、消息路由
 
 ## 常驻部署
 
-- macOS 用 `scripts/install-launchd.sh` 安装 LaunchAgent。**不要把 token 写进 plist**：
-  `scripts/launchd-run.sh` 负责 `source .env` 再 `exec node`，`.env` 是唯一配置源。
-- 改完 `.env` 必须 `launchctl unload/load` 才生效（进程启动时读取一次）。
-- 手工在终端里 `node dist/server.js` 也是可行的调试方式，但进程会挂在那个 TTY 上，
-  关标签页会被 SIGHUP 带走；长期运行一律走 LaunchAgent。
+- macOS 用 `scripts/install-launchd.sh` 安装两个 LaunchAgent（bridge + watchdog）。
+  **不要把 token 写进 plist**：`scripts/launchd-run.sh` 负责 `source .env` 再 `exec node`，
+  `.env` 是唯一配置源。
+- 改完 `.env` 生效：`kill -USR2 $(pgrep -f dist/server.js)` —— 原地 `execve` 重启，
+  **PID 不变、launchd 注册不丢**，会重新 source `.env` 并重跑 `launchd-run.sh`。
+- 只重启不重读配置：`launchctl kickstart -k gui/$(id -u)/dev.zevarc.pigo-bridge`。
+- **禁止在任何脚本或文档里用 `launchctl unload` / `bootout` 来重启 bridge。**
+  unload 会删除注册并 SIGTERM 进程，而执行它的 shell 通常是 bridge 的 pi 子进程，
+  于是命令在跑到 `load` 之前就被杀了 —— 这是历史上反复掉线的直接原因。
+  `install-launchd.sh` 里因此只用 `bootout`+`bootstrap`（紧跟重试），并带
+  "是否在 bridge 进程树内" 的自检会拒绝执行。
+- **看门狗（`dev.zevarc.pigo-bridge.watchdog`）是必需的一层，不是可选优化。**
+  `KeepAlive` 只能拉起 launchd 还认识的进程；服务被 bootout 后它无能为力。
+  pi 子进程与 bridge 同 UID，随时能执行 bootout，所以监管者必须在被监管树之外。
+  它每 60s 检查：未注册则 `bootstrap`，`/health` 不通则 `kickstart -k`。
+  日志 `data/watchdog.log`；暂停监督：`touch data/.bridge-disabled`。
+- **node 路径必须固定。** nvm 每次安装都会重写版本目录，把 plist 生成时的 `$PATH`
+  抄进去，迟早变成 `exec: node: not found`（exit 127）+ KeepAlive 无限重启。
+  `launchd-run.sh` 按 `nvm alias default` 的别名链（`default -> lts/* -> lts/lithium -> v26.13.0`）
+  解析出绝对路径，失败则回退到最新已安装版本 / 系统 node，并把实际用的解释器打到日志首行。
+  要强制指定：`.env` 里设 `BRIDGE_NODE=/abs/path/to/node`。
 
 ## 排查顺序
 

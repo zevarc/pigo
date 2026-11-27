@@ -28,6 +28,14 @@
     <true/>
     <key>KeepAlive</key>
     <true/>
+    <!--
+      KeepAlive retries a failing start forever. Without a throttle, a bad
+      BRIDGE_NODE or a missing dist/ turns into a tight restart loop that buries
+      the real error. 30s keeps self-healing (it still retries) while making the
+      log readable.
+    -->
+    <key>ThrottleInterval</key>
+    <integer>30</integer>
     <key>StandardOutPath</key>
     <string>__BRIDGE_HOME__/data/bridge.out.log</string>
     <key>StandardErrorPath</key>

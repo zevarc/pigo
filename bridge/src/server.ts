@@ -277,3 +277,49 @@ async function stop(signal: string) {
 
 process.on("SIGTERM", () => void stop("SIGTERM"));
 process.on("SIGINT", () => void stop("SIGINT"));
+
+/**
+ * Restart in place, without leaving the launchd domain.
+ *
+ * The only supported reload used to be `launchctl unload && launchctl load`.
+ * That pair is self-defeating: unload deletes the registration and SIGTERMs the
+ * process, so the shell that was mid-command is killed before it reaches load.
+ * Worse, that shell is normally a pi child of this very process, which makes
+ * every reload a guaranteed outage.
+ *
+ * `process.execve` replaces the image and keeps the PID, so launchd never sees
+ * the job leave: registration, KeepAlive state, and the pid it tracks all
+ * survive. Sessions are stopped cleanly first, exactly like SIGTERM, and new
+ * ones can be resumed/woken lazily by the next client.
+ *
+ * Triggered by SIGUSR2 (`launchctl kickstart -k` is the plain restart, this is
+ * the config-reload path that also re-sources .env through launchd-run.sh).
+ */
+async function restartInPlace() {
+	if (stopping) return;
+	stopping = true;
+	logger.info(`[Bridge] SIGUSR2 received, re-executing in place (pid=${process.pid})`);
+	server.close();
+	await bridge.shutdown();
+
+	if (typeof process.execve !== "function") {
+		logger.error("[Bridge] process.execve unavailable; exiting for launchd to restart");
+		process.exit(0);
+	}
+
+	try {
+		// Re-exec the launcher, not this file, so .env is sourced again and a
+		// changed BRIDGE_NODE takes effect on reload.
+		const launcher = process.env.BRIDGE_LAUNCHER;
+		if (launcher) {
+			process.execve(launcher, [launcher], process.env);
+		} else {
+			process.execve(process.execPath, [process.execPath, ...process.argv.slice(1)], process.env);
+		}
+	} catch (error) {
+		logger.error(`[Bridge] re-exec failed: ${(error as Error).message}`);
+		process.exit(0);
+	}
+}
+
+process.on("SIGUSR2", () => void restartInPlace());
