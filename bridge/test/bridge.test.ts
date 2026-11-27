@@ -328,9 +328,112 @@ test("get_messages proxies pi state", async () => {
 	const { bridge } = makeBridge();
 	try {
 		const meta = bridge.createSession(".");
-		const messages = await bridge.getMessages(meta.id);
-		assert.equal(messages.length, 2);
-		assert.equal(messages[1]!.role, "assistant");
+		const page = await bridge.getMessages(meta.id);
+		assert.equal(page.messages.length, 2);
+		assert.equal(page.messages[1]!.role, "assistant");
+		// Every message is returned, so nothing is reported as truncated.
+		assert.equal(page.total, 2);
+		assert.equal(page.truncated, false);
+	} finally {
+		await bridge.shutdown();
+	}
+});
+
+test("get_messages keeps long text intact and strips image payloads", async () => {
+	// Text clipping used to cost 15 real blocks to save 3.7% of a payload whose
+	// actual weight was images. Both halves of that fix are pinned here.
+	const longText = "x".repeat(20_000);
+	const image = { type: "image", data: "A".repeat(4000), mimeType: "image/jpeg" };
+	const { bridge, data } = makeBridge();
+	writeFileSync(
+		path.join(data, "messages.json"),
+		JSON.stringify([{ role: "user", content: [{ type: "text", text: longText }, image] }])
+	);
+	bridge.options.env.FAKE_PI_MESSAGES = path.join(data, "messages.json");
+	try {
+		const meta = bridge.createSession(".");
+		const page = await bridge.getMessages(meta.id);
+
+		const blocks = page.messages[0]!.content as Record<string, unknown>[];
+		assert.equal((blocks[0] as { text: string }).text, longText, "long text must survive verbatim");
+
+		const placeholder = blocks[1] as Record<string, unknown>;
+		assert.equal(placeholder.type, "image");
+		assert.equal(placeholder.omitted, true);
+		assert.equal(placeholder.data, undefined, "base64 must not ride along with the transcript");
+		assert.equal(placeholder.bytes, 3000, "base64 length converts to raw bytes");
+		assert.equal(placeholder.imageId, "0:0");
+	} finally {
+		await bridge.shutdown();
+	}
+});
+
+test("a new session does not pin a bridge-private session directory", async () => {
+	// `--session-dir` used to send every phone-created session into
+	// bridge/data/pi-sessions, where pi's own /resume could not see it. That made
+	// the phone and desktop disagree about which sessions exist.
+	//
+	// Asserted against the spawn decision itself rather than fake-pi's argv, since
+	// the fixture never sees how it was launched.
+	const { bridge, data } = makeBridge();
+	try {
+		const meta = bridge.createSession(".");
+		const privateDir = path.join(data, "sessions");
+
+		bridge.sendPrompt(meta.id, "hi");
+		await waitFor(() => bridge.getSession(meta.id)?.processAlive === true);
+
+		// A session file appearing in bridge's own data dir is the exact bug being
+		// fixed: that copy is invisible to pi's `/resume` on the desktop.
+		const leaked = existsSync(privateDir)
+			? readdirSync(privateDir, { recursive: true }).filter((f) => String(f).endsWith(".jsonl"))
+			: [];
+		assert.deepEqual(leaked, [], "bridge must not create its own session store");
+	} finally {
+		await bridge.shutdown();
+	}
+});
+
+test("the session file pi reports is recorded for later resumes", async () => {
+	const { bridge, data } = makeBridge();
+	const piFile = path.join(data, "pi-store", "2026-01-01T00-00-00-000Z_s-abc.jsonl");
+	bridge.options.env.FAKE_PI_SESSION_FILE = piFile;
+	try {
+		const meta = bridge.createSession(".");
+		bridge.sendPrompt(meta.id, "hi");
+
+		// Without this the next eviction would spawn a brand-new empty session
+		// instead of reopening the conversation.
+		await waitFor(() => bridge.getSession(meta.id)?.sessionFile === piFile, 6000);
+		assert.equal(bridge.getSession(meta.id)?.sessionFile, piFile);
+
+		const persisted = JSON.parse(readFileSync(path.join(data, "sessions.json"), "utf8")) as Record<string, unknown>[];
+		assert.equal(persisted.find((s) => s.id === meta.id)?.sessionFile, piFile);
+	} finally {
+		await bridge.shutdown();
+	}
+});
+
+test("get_image returns the payload behind a placeholder", async () => {
+	const image = { type: "image", data: "QUJD", mimeType: "image/png" };
+	const { bridge, data } = makeBridge();
+	writeFileSync(
+		path.join(data, "messages.json"),
+		JSON.stringify([{ role: "user", content: [image] }])
+	);
+	bridge.options.env.FAKE_PI_MESSAGES = path.join(data, "messages.json");
+	try {
+		const meta = bridge.createSession(".");
+		const page = await bridge.getMessages(meta.id);
+		const imageId = (page.messages[0]!.content as Record<string, unknown>[])[0]!.imageId as string;
+
+		const loaded = await bridge.getImage(meta.id, imageId);
+		assert.equal(loaded?.mimeType, "image/png");
+		assert.equal(loaded?.data, "QUJD");
+
+		// Out-of-range ids resolve to null rather than throwing at the socket.
+		assert.equal(await bridge.getImage(meta.id, "99:0"), null);
+		assert.equal(await bridge.getImage(meta.id, "nonsense"), null);
 	} finally {
 		await bridge.shutdown();
 	}

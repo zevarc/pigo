@@ -219,8 +219,23 @@ async function handleClientMessage(ws: WebSocket, raw: string) {
 			}
 
 			case "get_messages": {
-				const messages = await bridge.getMessages(sessionId);
-				send(ws, { type: "messages_snapshot", sessionId, messages });
+				const page = await bridge.getMessages(
+					sessionId,
+					typeof msg.limit === "number" ? msg.limit : 200
+				);
+				send(ws, { type: "messages_snapshot", sessionId, ...page });
+				return;
+			}
+
+			case "get_image": {
+				// Image payloads are stripped from messages_snapshot to keep the
+				// transcript small; the client asks for one when the user taps it.
+				const image = await bridge.getImage(sessionId, String(msg.imageId ?? ""));
+				if (!image) {
+					send(ws, { type: "error", sessionId, message: "image not found" });
+					return;
+				}
+				send(ws, { type: "image_data", sessionId, imageId: msg.imageId, ...image });
 				return;
 			}
 

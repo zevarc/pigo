@@ -85,6 +85,42 @@ interface SessionRuntime {
 
 const MAX_HISTORY_FILES = 200;
 
+/**
+ * Strips image payloads out of a message, replacing each with a placeholder.
+ *
+ * A coding session is mostly pictures, not prose: in an 8.6 MB transcript the
+ * 69 images were 6.79 MB (79%) while every text block together was under 1 MB.
+ * So the transport cost lives here, and text must not be clipped to compensate.
+ *
+ * The payload is not lost: the placeholder keeps `imageId`, and `getImage()`
+ * reloads that one image on demand when the user taps it.
+ */
+function stripImages(message: Record<string, unknown>, messageIndex: number): Record<string, unknown> {
+	const content = message.content;
+	if (!Array.isArray(content)) return message;
+
+	let imageIndex = 0;
+	const blocks = content.map((block) => {
+		if (!block || typeof block !== "object") return block;
+		const entry = block as Record<string, unknown>;
+		if (entry.type !== "image") return entry;
+
+		const data = typeof entry.data === "string" ? entry.data : "";
+		const placeholder: Record<string, unknown> = {
+			type: "image",
+			imageId: `${messageIndex}:${imageIndex}`,
+			mimeType: typeof entry.mimeType === "string" ? entry.mimeType : "image/png",
+			// base64 is 4/3 of the raw bytes; good enough for a size badge.
+			bytes: Math.round((data.length * 3) / 4),
+			omitted: true
+		};
+		imageIndex += 1;
+		return placeholder;
+	});
+
+	return { ...message, content: blocks };
+}
+
 /** Directories that are never workspaces and are expensive to walk. */
 const SKIP_DIRS = new Set([
 	"node_modules",
@@ -762,13 +798,91 @@ export class MultiSessionPiBridge {
 		return this.sendCommand(runtime, { type: "abort" });
 	}
 
-	async getMessages(sessionId: string): Promise<Record<string, unknown>[]> {
+	/**
+	 * Conversation history for a phone.
+	 *
+	 * Text is shipped complete: clipping prose saved 3.7% of the payload while
+	 * silently destroying code and analysis the user asked to read. The real cost
+	 * is image base64, which `stripImages` moves out of the transcript and
+	 * `getImage` reloads on demand.
+	 */
+	async getMessages(
+		sessionId: string,
+		limit = 200
+	): Promise<{ messages: Record<string, unknown>[]; total: number; truncated: boolean }> {
 		const runtime = this.sessions.get(sessionId);
 		if (!runtime) throw new Error(`Unknown session: ${sessionId}`);
 		this.touch(runtime);
 		const data = await this.request(runtime, { type: "get_messages" }, 30_000);
-		const messages = Array.isArray(data.messages) ? (data.messages as Record<string, unknown>[]) : [];
-		return messages;
+		const all = Array.isArray(data.messages) ? (data.messages as Record<string, unknown>[]) : [];
+
+		// Keep the tail (what the user actually wants to see) plus the leading
+		// system message, which carries the prompt/tool loadout.
+		const headIndexes = all
+			.map((message, index) => ({ message, index }))
+			.filter(({ message }) => message.role === "system");
+		const restIndexes = all
+			.map((message, index) => ({ message, index }))
+			.filter(({ message }) => message.role !== "system");
+		const tailIndexes = limit > 0 ? restIndexes.slice(-limit) : restIndexes;
+
+		// imageId is derived from the index in the full list, so `getImage` can
+		// resolve the same block later against pi's live messages.
+		const selected = [...headIndexes, ...tailIndexes];
+		const messages = selected.map(({ message, index }) => stripImages(message, index));
+		return {
+			messages,
+			total: all.length,
+			truncated: selected.length < all.length
+		};
+	}
+
+	/**
+	 * One image's base64 payload, for a placeholder the user tapped.
+	 *
+	 * `imageId` is `"<messageIndex>:<imageIndexWithinMessage>"` as produced by
+	 * `stripImages`, resolved against pi's live message list rather than a cache,
+	 * so it stays correct across a session reload.
+	 */
+	async getImage(sessionId: string, imageId: string): Promise<Record<string, unknown> | null> {
+		const runtime = this.sessions.get(sessionId);
+		if (!runtime) throw new Error(`Unknown session: ${sessionId}`);
+		this.touch(runtime);
+
+		const [rawMessageIndex, rawImageIndex] = imageId.split(":");
+		const messageIndex = Number(rawMessageIndex);
+		const imageIndex = Number(rawImageIndex);
+		if (!Number.isInteger(messageIndex) || !Number.isInteger(imageIndex)) return null;
+
+		const data = await this.request(runtime, { type: "get_messages" }, 30_000);
+		const all = Array.isArray(data.messages) ? (data.messages as Record<string, unknown>[]) : [];
+		const message = all[messageIndex];
+		if (!message || !Array.isArray(message.content)) return null;
+
+		let seen = 0;
+		for (const block of message.content) {
+			if (!block || typeof block !== "object") continue;
+			const entry = block as Record<string, unknown>;
+			if (entry.type !== "image") continue;
+			if (seen === imageIndex) {
+				return {
+					mimeType: typeof entry.mimeType === "string" ? entry.mimeType : "image/png",
+					data: typeof entry.data === "string" ? entry.data : ""
+				};
+			}
+			seen += 1;
+		}
+		return null;
+	}
+
+	/** Full text of one tool result, for when the user expands a clipped card. */
+	async getToolResult(sessionId: string, toolCallId: string): Promise<Record<string, unknown> | null> {
+		const runtime = this.sessions.get(sessionId);
+		if (!runtime) throw new Error(`Unknown session: ${sessionId}`);
+		const data = await this.request(runtime, { type: "get_messages" }, 30_000);
+		const all = Array.isArray(data.messages) ? (data.messages as Record<string, unknown>[]) : [];
+		const match = all.find((message) => message.toolCallId === toolCallId);
+		return match ?? null;
 	}
 
 	getMissedEvents(sessionId: string, lastSeq: number): Record<string, unknown> {

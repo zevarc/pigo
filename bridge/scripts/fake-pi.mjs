@@ -10,9 +10,13 @@
  *   FAKE_PI_RECORD  append every received command to this file as JSONL
  *   FAKE_PI_UNICODE emit a U+2028/U+2029/CRLF torture record on prompt
  */
-import { appendFileSync } from "node:fs";
+import { appendFileSync, readFileSync } from "node:fs";
 
 const RECORD = process.env.FAKE_PI_RECORD;
+// Optional JSON file holding the `get_messages` payload, for tests that need a
+// specific transcript shape (long text, image blocks) without editing the
+// fixture every other test shares.
+const MESSAGES_FILE = process.env.FAKE_PI_MESSAGES;
 
 let buffer = Buffer.alloc(0);
 let seq = 0;
@@ -216,6 +220,10 @@ const script = {
 	},
 
 	async get_messages(command) {
+		if (MESSAGES_FILE) {
+			respond(command, { messages: JSON.parse(readFileSync(MESSAGES_FILE, "utf8")) });
+			return;
+		}
 		respond(command, {
 			messages: [
 				{ role: "user", content: "earlier question", timestamp: 1 },

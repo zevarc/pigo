@@ -9,6 +9,12 @@ export interface SessionSummary {
   isAgentRunning: boolean;
   processAlive: boolean;
   latestSeq: number;
+  /**
+   * Absolute path of the pi session file, once pi has reported it.
+   * Undefined for a session that has never been spawned, and for the window
+   * between spawn and the `get_state` reply.
+   */
+  sessionFile?: string;
 }
 
 export interface BridgeEvent {
@@ -31,11 +37,15 @@ export interface ClientMessage {
   /** `/resume` picker. */
   query?: string;
   limit?: number;
+  /** Tool result to fetch in full. */
+  toolCallId?: string;
   /** Extension UI dialog reply. */
   requestId?: string;
   value?: string;
   confirmed?: boolean;
   cancelled?: boolean;
+  /** Image placeholder tapped in the transcript; see `get_image`. */
+  imageId?: string;
 }
 
 export interface ToolSnapshot {
