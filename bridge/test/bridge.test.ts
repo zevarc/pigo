@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -20,7 +20,6 @@ function makeBridge(overrides: Partial<Parameters<typeof MultiSessionPiBridge>[0
 		cliArgs: [],
 		allowedRoot: root,
 		dataDir: data,
-		sessionDir: path.join(data, "sessions"),
 		piSessionsRoot: path.join(data, "pi-sessions"),
 		extraWorkspaces: [],
 		idleTimeoutMs: 0,
@@ -336,3 +335,49 @@ test("get_messages proxies pi state", async () => {
 		await bridge.shutdown();
 	}
 });
+test("a new session does not pin a bridge-private session directory", async () => {
+	// `--session-dir` used to send every phone-created session into
+	// bridge/data/pi-sessions, where pi's own /resume could not see it. That made
+	// the phone and desktop disagree about which sessions exist.
+	//
+	// Asserted against the spawn decision itself rather than fake-pi's argv, since
+	// the fixture never sees how it was launched.
+	const { bridge, data } = makeBridge();
+	try {
+		const meta = bridge.createSession(".");
+		const privateDir = path.join(data, "sessions");
+
+		bridge.sendPrompt(meta.id, "hi");
+		await waitFor(() => bridge.getSession(meta.id)?.processAlive === true);
+
+		// A session file appearing in bridge's own data dir is the exact bug being
+		// fixed: that copy is invisible to pi's `/resume` on the desktop.
+		const leaked = existsSync(privateDir)
+			? readdirSync(privateDir, { recursive: true }).filter((f) => String(f).endsWith(".jsonl"))
+			: [];
+		assert.deepEqual(leaked, [], "bridge must not create its own session store");
+	} finally {
+		await bridge.shutdown();
+	}
+});
+
+test("the session file pi reports is recorded for later resumes", async () => {
+	const { bridge, data } = makeBridge();
+	const piFile = path.join(data, "pi-store", "2026-01-01T00-00-00-000Z_s-abc.jsonl");
+	bridge.options.env.FAKE_PI_SESSION_FILE = piFile;
+	try {
+		const meta = bridge.createSession(".");
+		bridge.sendPrompt(meta.id, "hi");
+
+		// Without this the next eviction would spawn a brand-new empty session
+		// instead of reopening the conversation.
+		await waitFor(() => bridge.getSession(meta.id)?.sessionFile === piFile, 6000);
+		assert.equal(bridge.getSession(meta.id)?.sessionFile, piFile);
+
+		const persisted = JSON.parse(readFileSync(path.join(data, "sessions.json"), "utf8")) as Record<string, unknown>[];
+		assert.equal(persisted.find((s) => s.id === meta.id)?.sessionFile, piFile);
+	} finally {
+		await bridge.shutdown();
+	}
+});
+

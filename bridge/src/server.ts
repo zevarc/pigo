@@ -32,7 +32,6 @@ const HOST = process.env.BRIDGE_HOST ?? "0.0.0.0";
 const BRIDGE_TOKEN = process.env.BRIDGE_TOKEN ?? "";
 const ALLOWED_ROOT = path.resolve(process.env.PI_ALLOWED_ROOT ?? process.cwd());
 const DATA_DIR = path.resolve(process.env.BRIDGE_DATA_DIR ?? "./data");
-const SESSION_DIR = path.resolve(process.env.PI_SESSION_DIR ?? path.join(DATA_DIR, "pi-sessions"));
 // pi's own store. This is what /resume lists, so it must be the real one.
 const SERVICES_ROOT = path.resolve(
 	process.env.PI_SESSIONS_ROOT ?? path.join(process.env.PI_AGENT_DIR ?? path.join(process.env.HOME ?? "~", ".pi", "agent"), "sessions")
@@ -51,7 +50,6 @@ const bridge = new MultiSessionPiBridge({
 	cliArgs: (process.env.PI_ARGS ?? "").split(/\s+/).filter(Boolean),
 	allowedRoot: ALLOWED_ROOT,
 	dataDir: DATA_DIR,
-	sessionDir: SESSION_DIR,
 	piSessionsRoot: SERVICES_ROOT,
 	extraWorkspaces: (process.env.PI_EXTRA_WORKSPACES ?? process.env.PI_ALLOWED_ROOT ?? "")
 		.split(",")

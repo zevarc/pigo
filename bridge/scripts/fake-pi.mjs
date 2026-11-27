@@ -206,6 +206,9 @@ const script = {
 	async get_state(command) {
 		respond(command, {
 			sessionId: "fake",
+			// Mirrors the real field so bridge can record where the session lives;
+			// a null here means "path unknown", which is the pre-existing behaviour.
+			sessionFile: process.env.FAKE_PI_SESSION_FILE || undefined,
 			model: { id: "fake/model" },
 			isStreaming: streaming,
 			messageCount: 2

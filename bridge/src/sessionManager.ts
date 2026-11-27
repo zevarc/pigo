@@ -14,7 +14,6 @@ export interface BridgeOptions {
 	cliArgs: string[];
 	allowedRoot: string;
 	dataDir: string;
-	sessionDir: string;
 	/** pi's own session store, the source of truth for `/resume`. */
 	piSessionsRoot: string;
 	/** Extra starting points for new sessions, besides pi's recent cwds. */
@@ -41,9 +40,9 @@ export interface SessionMeta {
 	createdAt: number;
 	lastActiveAt: number;
 	/**
-	 * Absolute path of the pi session file. Bridge-owned sessions get their file
-	 * inside `sessionDir`; resumed ones point at pi's own store so `--session`
-	 * opens the real history instead of a copy.
+	 * Absolute path of the pi session file backing this session, as reported by
+	 * pi's `get_state`. Every session now lives in pi's own store, so the phone and
+	 * the desktop's `/resume` see the same list. Absent until pi has been spawned.
 	 */
 	sessionFile?: string;
 }
@@ -118,7 +117,8 @@ export class MultiSessionPiBridge {
 	constructor(options: BridgeOptions) {
 		this.options = options;
 		mkdirSync(options.dataDir, { recursive: true });
-		mkdirSync(options.sessionDir, { recursive: true });
+		// `sessionDir` is no longer created: sessions live in pi's own store now,
+		// and an empty bridge-private directory only invites the old mistake back.
 		this.sessionsFile = path.join(options.dataDir, "sessions.json");
 		this.loadSessions();
 	}
@@ -174,7 +174,10 @@ export class MultiSessionPiBridge {
 				lastActiveAt: runtime.meta.lastActiveAt,
 				isAgentRunning: runtime.isAgentRunning,
 				processAlive: runtime.proc !== null && !runtime.exited,
-				latestSeq: runtime.seqCounter
+				latestSeq: runtime.seqCounter,
+				// Surfaced so a client can tell a bridge-created session (no file yet)
+				// from one backed by pi's real store.
+				...(runtime.meta.sessionFile ? { sessionFile: runtime.meta.sessionFile } : {})
 			}))
 			.sort((a, b) => b.lastActiveAt - a.lastActiveAt);
 	}
@@ -363,7 +366,13 @@ export class MultiSessionPiBridge {
 				// Resume: open pi's own session file, in the cwd it recorded.
 				args.push("--session", runtime.meta.sessionFile);
 			} else {
-				args.push("--session-id", runtime.meta.id, "--session-dir", this.options.sessionDir);
+				// New session: let pi pick the directory. Passing `--session-dir`
+				// put these files in bridge's private data dir, where pi's own
+				// `/resume` could not see them — so a session created on the phone
+				// was invisible on the desktop and vice versa. pi writes to
+				// ~/.pi/agent/sessions/--<cwd>--/ by default, which is the single
+				// store both sides must share.
+				args.push("--session-id", runtime.meta.id);
 			}
 		}
 
@@ -415,7 +424,44 @@ export class MultiSessionPiBridge {
 		});
 
 		this.resetIdleTimer(runtime);
+
+		// A brand-new session has no known file yet: launchd-run/pi decide the
+		// path, and without it a later eviction would spawn a second, empty
+		// session instead of reopening this one. Ask pi which file it created and
+		// persist that, so the snapshot the phone sees is the real store.
+		if (!runtime.meta.sessionFile) {
+			void this.learnSessionFile(runtime);
+		}
+
 		return proc;
+	}
+
+	/**
+	 * Records the pi session file backing a bridge-created session.
+	 *
+	 * `get_state` is the authoritative source (`docs/rpc-commands.md`): guessing
+	 * the path from cwd plus id would break the moment pi's naming changes.
+	 */
+	private async learnSessionFile(runtime: SessionRuntime): Promise<void> {
+		const sessionId = runtime.meta.id;
+		try {
+			const data = await this.request(runtime, { type: "get_state" }, 10_000);
+			const file = typeof data.sessionFile === "string" ? data.sessionFile : "";
+			if (!file) return;
+			// The session may have been deleted while the request was in flight.
+			if (!this.sessions.has(sessionId)) return;
+			if (runtime.meta.sessionFile === file) return;
+
+			runtime.meta.sessionFile = file;
+			this.saveSessions();
+			this.broadcast({ type: "sessions_updated", sessions: this.getSessionSummaries() });
+		} catch (error) {
+			// Not fatal: the session still works, it just will not survive an
+			// eviction by `--session`. Retried on the next spawn.
+			this.options.logger.warn(
+				`[${sessionId}] could not learn session file: ${(error as Error).message}`
+			);
+		}
 	}
 
 	/** Orderly shutdown per docs/rpc.md: close stdin, wait, then signal. */
