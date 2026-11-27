@@ -69,17 +69,20 @@ jobs:
       # Google has since removed from the repository. Only the platform matching
       # compileSdk 37 is missing, so that is all we install.
       - name: Install SDK platform 37
-        env:
-          ANDROID_HOME: ${{ env.ANDROID_SDK_ROOT }}
         run: |
-          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses > /dev/null 2>&1 || true
-          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" \
-            --install "platforms;android-37.0" "build-tools;36.0.0"
+          # The runner image keeps the SDK at a fixed path but does not export
+          # ANDROID_HOME to every step, so set it here rather than assume.
+          export ANDROID_HOME=/usr/local/lib/android/sdk
+          export ANDROID_SDK_ROOT="$ANDROID_HOME"
+          SDKMANAGER="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+          [ -x "$SDKMANAGER" ] || SDKMANAGER=$(find "$ANDROID_HOME" -name sdkmanager -type f | head -1)
+          echo "using $SDKMANAGER"
 
-      - name: Show SDK state
-        run: |
-          ls "$ANDROID_SDK_ROOT/platforms"
-          echo "ANDROID_HOME=$ANDROID_SDK_ROOT"
+          yes | "$SDKMANAGER" --licenses > /dev/null 2>&1 || true
+          "$SDKMANAGER" --install "platforms;android-37.0" "build-tools;36.0.0"
+
+          ls "$ANDROID_HOME/platforms"
+          echo "ANDROID_HOME=$ANDROID_HOME" >> "$GITHUB_ENV"
 
       - uses: gradle/actions/setup-gradle@v4
 
