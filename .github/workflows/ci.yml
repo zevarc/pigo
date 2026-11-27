@@ -104,17 +104,59 @@ jobs:
       # A release APK is smaller and has no debug instrumentation, but an
       # unsigned one cannot be installed at all. Decode the keystore only when
       # the secret exists, so forks and unconfigured clones still build.
+      #
+      # The secret is hand-pasted, so it arrives with whatever the local base64
+      # tool emitted: wrapped lines, a trailing newline, or stray whitespace.
+      # `base64 -d` rejects any of those with "invalid input", and because the
+      # failure happened before the upload steps, one bad character cost the
+      # whole run its artifacts. Whitespace is stripped first, and a payload
+      # that still will not decode now downgrades to a debug build instead of
+      # failing the job — the same behaviour as having no secret at all.
       - name: Decode keystore
         id: keystore
         env:
           PIGO_KEYSTORE_BASE64: ${{ secrets.PIGO_KEYSTORE_BASE64 }}
+          PIGO_KEYSTORE_PASSWORD: ${{ secrets.PIGO_KEYSTORE_PASSWORD }}
         run: |
           if [ -z "$PIGO_KEYSTORE_BASE64" ]; then
             echo "No keystore secret; release build will be skipped."
             echo "present=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
-          echo "$PIGO_KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/pigo-release.jks"
+
+          if ! printf '%s' "$PIGO_KEYSTORE_BASE64" | tr -d '[:space:]' | base64 -d > "$RUNNER_TEMP/pigo-release.jks" 2>/dev/null; then
+            echo "::warning::PIGO_KEYSTORE_BASE64 is not valid base64; skipping the signed release build. Re-paste it as one line of plain base64 (no line wrapping, no whitespace)."
+            echo "present=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          if [ ! -s "$RUNNER_TEMP/pigo-release.jks" ]; then
+            echo "::warning::decoded keystore is empty; skipping the signed release build."
+            echo "present=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          # `base64 -d` happily decodes almost anything, so a truncated paste
+          # yields a few junk bytes that only fail later inside assembleRelease.
+          # Both JKS and PKCS12 start with the DER SEQUENCE tag; a truncated
+          # keystore still starts with it too, so when the store password is
+          # available ask keytool — the only tool that can actually tell a
+          # keystore from thirty bytes of prefix.
+          if [ "$(head -c 1 "$RUNNER_TEMP/pigo-release.jks" | od -An -tx1 | tr -d ' \n')" != "30" ]; then
+            echo "::warning::decoded secret is not a keystore (missing DER header); skipping the signed release build."
+            echo "present=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          if [ -n "$PIGO_KEYSTORE_PASSWORD" ]; then
+            if ! keytool -list -keystore "$RUNNER_TEMP/pigo-release.jks" \
+                   -storepass "$PIGO_KEYSTORE_PASSWORD" > /dev/null 2>&1; then
+              echo "::warning::decoded secret is not a readable keystore (truncated, or the stored password does not match); skipping the signed release build."
+              echo "present=false" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+          fi
+
           echo "PIGO_KEYSTORE_FILE=$RUNNER_TEMP/pigo-release.jks" >> "$GITHUB_ENV"
           echo "present=true" >> "$GITHUB_OUTPUT"
 
